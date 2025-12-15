@@ -1,0 +1,139 @@
+:root {
+  color-scheme: light;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: #0f1115;
+  color: #f4f6fb;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 20%, rgba(68, 122, 230, 0.25), transparent 30%),
+    radial-gradient(circle at 80% 0%, rgba(180, 98, 255, 0.2), transparent 30%),
+    #0f1115;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 64px 24px 96px;
+}
+
+.hero {
+  margin-bottom: 48px;
+}
+
+.hero h1 {
+  font-size: 40px;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+
+.hero p {
+  color: #c8cdd7;
+  font-size: 18px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.card {
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+.card h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.card p {
+  color: #c8cdd7;
+  line-height: 1.5;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #c8cdd7;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7aa2ff;
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #e8ecf5;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+}
+
+.table th {
+  color: #9ba3b1;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.kv {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px 0;
+  padding: 0;
+}
+
+.kv li {
+  display: flex;
+  justify-content: space-between;
+  color: #c8cdd7;
+}
+
+.kv strong {
+  color: #e8ecf5;
+}
+
+.list {
+  list-style: disc;
+  padding-left: 18px;
+  color: #c8cdd7;
+  line-height: 1.5;
+}
+
+.muted {
+  color: #9ba3b1;
+}
