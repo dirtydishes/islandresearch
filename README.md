@@ -22,12 +22,17 @@ Public-filings sell-side model reverse-engineering and forecasting platform: ing
 - Ticker map lives in `data/ticker_cik.csv`; override with `TICKER_CIK_PATH` if needed.
 - Queue a fetch job: `POST http://localhost:8000/ingest/AAPL` (optionally `?limit=2`). Requires worker + Redis running.
 - List supported tickers: `GET http://localhost:8000/tickers`.
-- Worker job saves SEC submissions JSON and filings HTML into `storage/raw/{cik}/` and records metadata in Postgres (`filings` table).
+- Worker job saves SEC submissions JSON, filing index, and primary HTML into `storage/raw/{cik}/` and records metadata in Postgres (`filings` table).
 - Query stored filings: `GET http://localhost:8000/filings/AAPL`.
 - CLI alternative (inside repo): `python -m workers.jobs.fetch_filings AAPL --limit 2 --storage-root storage/raw`.
 
 ## Parsing (demo)
-- Minimal parser extracts revenue/net_income/ebitda heuristically from HTML tables into `facts` table.
+- Parser is XBRL-first: extracts key us-gaap tags (revenue, net income, operating income, cash, assets, liabilities, equity, cash flow items) with period/end and unit into `facts`.
 - Trigger parse via worker job (after a filing is fetched): enqueue `workers.jobs.parse_filing.parse_filing` with `accession`, `cik`, `ticker`, `html_path` (see saved paths in `storage/raw/{cik}/`).
 - API to list parsed facts: `GET http://localhost:8000/facts/AAPL`.
 - API to queue parse job for stored accession: `POST http://localhost:8000/parse/{accession}` (uses stored path from filings table).
+
+## Canonical facts (placeholder)
+- Worker job to copy parsed facts into `canonical_facts` table: enqueue `workers.jobs.materialize_canonical.run_materialization` with `ticker`.
+- API to list canonical facts: `GET http://localhost:8000/canonical/AAPL`.
+- Current materialization is a pass-through; replace with real normalization (periods/units/taxonomy) later.

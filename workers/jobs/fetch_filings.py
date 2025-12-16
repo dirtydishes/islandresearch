@@ -44,19 +44,31 @@ def fetch_latest_filings(ticker: str, limit: int = 3, storage_root: Optional[str
             continue
         if len(saved) >= limit:
             break
-        content = client.get_filing(cik, accession)
-        path = writer.save_bytes(cik, accession.replace("-", ""), content, suffix="html")
-        saved.append({"accession": accession, "path": path, "form": form, "filed_at": filed_at})
+        index_content = client.get_filing_index(cik, accession)
+        index_path = writer.save_bytes(cik, accession.replace("-", ""), index_content, suffix="index.html")
+        primary_content = client.resolve_primary_html(cik, accession, index_content) or index_content
+        primary_path = writer.save_bytes(
+            cik, f"{accession.replace('-', '')}_primary", primary_content, suffix="html"
+        )
+        saved.append(
+            {
+                "accession": accession,
+                "form": form,
+                "filed_at": filed_at,
+                "primary_path": primary_path,
+                "index_path": index_path,
+            }
+        )
         upsert_filing(
             ticker=ticker,
             cik=cik,
             accession=accession,
             form=form,
             filed_at=filed_at,
-            path=path,
+            path=primary_path,
             submissions_path=meta_path,
         )
-        logger.info("Saved filing %s (%s) for %s to %s", accession, form, ticker, path)
+        logger.info("Saved filing %s (%s) for %s to %s", accession, form, ticker, primary_path)
 
     return {
         "ticker": ticker.upper(),

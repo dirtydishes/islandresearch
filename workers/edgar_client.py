@@ -2,11 +2,13 @@ import os
 import pathlib
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 DEFAULT_USER_AGENT = os.getenv(
-    "EDGAR_USER_AGENT", "deltaisland-research/0.1 (contact@example.com)"
+    "EDGAR_USER_AGENT", "deltaisland-research/0.1 (contact@deltaisland.local)"
 )
 
 
@@ -23,7 +25,7 @@ class EDGARClient:
         time.sleep(0.2)  # be gentle
         return resp.json()
 
-    def get_filing(self, cik: str, accession: str) -> bytes:
+    def get_filing_index(self, cik: str, accession: str) -> bytes:
         # accession in submissions JSON has no dashes; transform for path.
         no_dashes = accession.replace("-", "")
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{no_dashes}/{accession}-index.html"
@@ -31,6 +33,59 @@ class EDGARClient:
         resp.raise_for_status()
         time.sleep(0.2)
         return resp.content
+
+    def resolve_primary_html(self, cik: str, accession: str, index_content: bytes) -> Optional[bytes]:
+        """Find and download the primary HTML document for a filing using the index page."""
+        no_dashes = accession.replace("-", "")
+        base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{no_dashes}/"
+        soup = BeautifulSoup(index_content, "html.parser")
+
+        # Prefer direct document links under the accession directory.
+        target_prefix = f"/Archives/edgar/data/{int(cik)}/{no_dashes}/"
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            lower = href.lower()
+            if "index" in lower:
+                continue
+            if not lower.endswith((".htm", ".html")):
+                continue
+            if target_prefix not in href:
+                continue
+            if "ix?doc=" in lower:
+                doc_path = href.split("ix?doc=")[-1]
+                url = urljoin("https://www.sec.gov", doc_path)
+            else:
+                url = urljoin("https://www.sec.gov", href)
+            resp = self.session.get(url, timeout=30)
+            if resp.status_code == 404:
+                continue
+            resp.raise_for_status()
+            time.sleep(0.2)
+            return resp.content
+
+        # Fallback: handle ix?doc= wrapper by dereferencing to the underlying document.
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            lower = href.lower()
+            if not lower.endswith((".htm", ".html")):
+                continue
+            if "index" in lower:
+                continue
+
+            # If link is an ix viewer wrapper, strip to the underlying doc.
+            if "ix?doc=" in lower:
+                doc_path = href.split("ix?doc=")[-1]
+                url = urljoin("https://www.sec.gov", doc_path)
+            else:
+                url = urljoin(base, href)
+
+            resp = self.session.get(url, timeout=30)
+            if resp.status_code == 404:
+                continue
+            resp.raise_for_status()
+            time.sleep(0.2)
+            return resp.content
+        return None
 
 
 class StorageWriter:

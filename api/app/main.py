@@ -1,6 +1,6 @@
 import os
 from datetime import date, datetime
-from typing import List
+from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -11,6 +11,9 @@ from .mock_data import MOCK_MODEL
 from .db import get_filing_by_accession, list_filings_by_ticker
 from .ticker_map import get_cik_for_ticker, list_supported_tickers
 from .facts import list_facts_by_ticker
+from .canonical import list_canonical_by_ticker
+from .statements import get_statements_for_ticker
+from .summary import get_summary
 
 
 app = FastAPI(title="deltaisland research API", version="0.1.0")
@@ -87,6 +90,50 @@ class Fact(BaseModel):
     created_at: datetime | None
 
 
+class CanonicalFact(BaseModel):
+    ticker: str
+    cik: str
+    accession: str
+    period_end: date | None
+    period_type: str | None
+    statement: str | None
+    line_item: str | None
+    value: float | None
+    unit: str | None
+    source_fact_id: int | None
+    created_at: datetime | None
+
+
+class StatementLine(BaseModel):
+    line_item: str | None
+    value: float | None
+    unit: str | None
+
+
+class StatementPeriod(BaseModel):
+    period_end: str
+    lines: dict[str, list[StatementLine]]
+
+
+class SummaryPeriod(BaseModel):
+    period_end: str
+    values: dict[str, dict]
+
+
+class SummaryResponse(BaseModel):
+    ticker: str
+    periods: List[SummaryPeriod]
+    filings: List[dict]
+
+
+class TriggerResponse(BaseModel):
+    ticker: str
+    ingest_job_id: str | None
+    parse_job_id: str | None
+    canonical_job_id: str | None
+    queue: str
+
+
 @app.get("/health", tags=["health"])
 def health() -> dict:
     """Lightweight readiness probe."""
@@ -161,5 +208,50 @@ def enqueue_parse(accession: str) -> ParseEnqueueResponse:
         cik=filing["cik"],
         path=path,
         job_id=job.id,
+        queue=q.name,
+    )
+
+
+@app.get("/canonical/{ticker}", response_model=List[CanonicalFact], tags=["canonical"])
+def get_canonical(ticker: str) -> List[CanonicalFact]:
+    """List canonical facts for a ticker."""
+    rows = list_canonical_by_ticker(ticker)
+    if not rows:
+        raise HTTPException(status_code=404, detail="No canonical facts stored for ticker")
+    return rows
+
+
+@app.get("/statements/{ticker}", response_model=Dict[str, List[StatementPeriod]], tags=["statements"])
+def get_statements(ticker: str, limit: int = 8) -> Dict[str, List[StatementPeriod]]:
+    """Return statement-friendly periods assembled from canonical facts."""
+    data = get_statements_for_ticker(ticker, limit=limit)
+    if not data["periods"]:
+        # Return empty structure rather than 404 to aid troubleshooting.
+        return {"periods": []}
+    return data
+
+
+@app.get("/summary/{ticker}", response_model=SummaryResponse, tags=["summary"])
+def summary(ticker: str) -> SummaryResponse:
+    data = get_summary(ticker)
+    # Return empty structures instead of 404 so UI can show graceful empty state.
+    return data
+
+
+@app.post("/trigger/{ticker}", response_model=TriggerResponse, tags=["ingest"])
+def trigger_ingest_pipeline(ticker: str, limit: int = 1) -> TriggerResponse:
+    """Trigger ingest -> parse -> canonical materialization for a ticker."""
+    cik = get_cik_for_ticker(ticker)
+    if not cik:
+        raise HTTPException(status_code=404, detail="Ticker not found in mapping")
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    redis_conn = Redis.from_url(redis_url)
+    q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
+    pipeline_job = q.enqueue("workers.jobs.run_pipeline.run_pipeline", ticker, limit=limit)
+    return TriggerResponse(
+        ticker=ticker.upper(),
+        ingest_job_id=pipeline_job.id,
+        parse_job_id=pipeline_job.id,
+        canonical_job_id=pipeline_job.id,
         queue=q.name,
     )

@@ -29,6 +29,7 @@ type MockModel = {
 
 type Props = {
   data: MockModel;
+  statements?: StatementPeriod[];
 };
 
 const fallbackData: MockModel = {
@@ -46,23 +47,82 @@ const fallbackData: MockModel = {
   audit_summary: [],
 };
 
+type StatementLine = {
+  line_item: string | null;
+  value: number | null;
+  unit: string | null;
+};
+
+type StatementPeriod = {
+  period_end: string;
+  lines: Record<string, StatementLine[]>;
+};
+
 export async function getServerSideProps() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   try {
-    const res = await fetch(`${apiBase}/mock/model`);
-    if (!res.ok) throw new Error(`API returned ${res.status}`);
-    const data = (await res.json()) as MockModel;
-    return { props: { data } };
+    const [modelRes, statementsRes] = await Promise.all([
+      fetch(`${apiBase}/mock/model`),
+      fetch(`${apiBase}/statements/AAPL`),
+    ]);
+    if (!modelRes.ok) throw new Error(`API returned ${modelRes.status}`);
+    const data = (await modelRes.json()) as MockModel;
+    const stmtData = statementsRes.ok ? await statementsRes.json() : { periods: [] };
+    return { props: { data, statements: stmtData.periods ?? [] } };
   } catch (err) {
-    return { props: { data: fallbackData } };
+    return { props: { data: fallbackData, statements: [] } };
   }
 }
 
 function formatCurrency(value: number) {
-  return `$${value.toFixed(1)}m`;
+  const num = Number(value);
+  if (Number.isNaN(num)) return "—";
+  const abs = Math.abs(num);
+  let divisor = 1;
+  let suffix = "";
+  if (abs >= 1_000_000_000_000) {
+    divisor = 1_000_000_000_000;
+    suffix = "T";
+  } else if (abs >= 1_000_000_000) {
+    divisor = 1_000_000_000;
+    suffix = "B";
+  } else if (abs >= 1_000_000) {
+    divisor = 1_000_000;
+    suffix = "M";
+  }
+  const scaled = num / divisor;
+  const decimals = divisor === 1 ? (abs >= 1 ? 2 : 3) : 3;
+  const factor = Math.pow(10, decimals);
+  const floored = Math.floor(scaled * factor) / factor;
+  const formatted = floored.toLocaleString("en-US", {
+    minimumFractionDigits: floored % 1 === 0 ? 0 : Math.min(decimals, 3),
+    maximumFractionDigits: decimals,
+  });
+  return `$${formatted}${suffix}`;
 }
 
-export default function MockPage({ data }: Props) {
+function renderStatement(lines: Record<string, StatementLine[]> | undefined) {
+  if (!lines) return null;
+  return (
+    <div className="statement">
+      {Object.entries(lines).map(([stmt, items]) => (
+        <div key={stmt} className="statement-block">
+          <h3>{stmt}</h3>
+          <ul>
+            {items.map((item) => (
+              <li key={`${stmt}-${item.line_item}`}>
+                <span>{item.line_item ?? "n/a"}</span>
+                <strong>{item.value !== null && item.value !== undefined ? formatCurrency(item.value) : "—"}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function MockPage({ data, statements = [] }: Props) {
   return (
     <>
       <Head>
@@ -83,30 +143,32 @@ export default function MockPage({ data }: Props) {
             {data.statements.length === 0 ? (
               <p className="muted">No data available.</p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Period</th>
-                    <th>Revenue</th>
-                    <th>EBITDA</th>
-                    <th>Net Inc.</th>
-                    <th>Cash</th>
-                    <th>Debt</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.statements.map((row) => (
-                    <tr key={row.period}>
-                      <td>{row.period}</td>
-                      <td>{formatCurrency(row.revenue)}</td>
-                      <td>{formatCurrency(row.ebitda)}</td>
-                      <td>{formatCurrency(row.net_income)}</td>
-                      <td>{formatCurrency(row.cash)}</td>
-                      <td>{formatCurrency(row.debt)}</td>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Period</th>
+                      <th>Revenue</th>
+                      <th>EBITDA</th>
+                      <th>Net Inc.</th>
+                      <th>Cash</th>
+                      <th>Debt</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.statements.map((row) => (
+                      <tr key={row.period}>
+                        <td>{row.period}</td>
+                        <td>{formatCurrency(row.revenue)}</td>
+                        <td>{formatCurrency(row.ebitda)}</td>
+                        <td>{formatCurrency(row.net_income)}</td>
+                        <td>{formatCurrency(row.cash)}</td>
+                        <td>{formatCurrency(row.debt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
           <div className="card">
@@ -117,32 +179,34 @@ export default function MockPage({ data }: Props) {
             {data.forecast.length === 0 ? (
               <p className="muted">No data available.</p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Period</th>
-                    <th>Revenue</th>
-                    <th>EBITDA</th>
-                    <th>Net Inc.</th>
-                    <th>Cash</th>
-                    <th>Debt</th>
-                    <th>FCF</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.forecast.map((row) => (
-                    <tr key={row.period}>
-                      <td>{row.period}</td>
-                      <td>{formatCurrency(row.revenue)}</td>
-                      <td>{formatCurrency(row.ebitda)}</td>
-                      <td>{formatCurrency(row.net_income)}</td>
-                      <td>{formatCurrency(row.cash)}</td>
-                      <td>{formatCurrency(row.debt)}</td>
-                      <td>{row.fcf !== undefined ? formatCurrency(row.fcf) : "—"}</td>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Period</th>
+                      <th>Revenue</th>
+                      <th>EBITDA</th>
+                      <th>Net Inc.</th>
+                      <th>Cash</th>
+                      <th>Debt</th>
+                      <th>FCF</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.forecast.map((row) => (
+                      <tr key={row.period}>
+                        <td>{row.period}</td>
+                        <td>{formatCurrency(row.revenue)}</td>
+                        <td>{formatCurrency(row.ebitda)}</td>
+                        <td>{formatCurrency(row.net_income)}</td>
+                        <td>{formatCurrency(row.cash)}</td>
+                        <td>{formatCurrency(row.debt)}</td>
+                        <td>{row.fcf !== undefined ? formatCurrency(row.fcf) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
           <div className="card">
@@ -183,6 +247,24 @@ export default function MockPage({ data }: Props) {
                   <li key={item}>{item}</li>
                 ))}
               </ul>
+            )}
+          </div>
+          <div className="card full">
+            <div className="card-header">
+              <h2>Statements</h2>
+              <span className="pill">Canonical</span>
+            </div>
+            {statements.length === 0 ? (
+              <p className="muted">No canonical statements available.</p>
+            ) : (
+              statements.map((period) => (
+                <div key={period.period_end} className="statement-period">
+                  <div className="statement-header">
+                    <h3>{period.period_end}</h3>
+                  </div>
+                  {renderStatement(period.lines)}
+                </div>
+              ))
             )}
           </div>
         </section>

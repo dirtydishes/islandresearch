@@ -3,3 +3,4 @@ uvicorn[standard]==0.24.0
 rq==1.15.1
 redis==5.0.1
 psycopg2-binary==2.9.9
+requests==2.32.5
