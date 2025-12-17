@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from ..db import upsert_filing
 from ..edgar_client import EDGARClient, StorageWriter
-from ..ticker_map import get_cik_for_ticker
+from ..ticker_map import get_cik_for_ticker, get_coverage_status
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def fetch_latest_filings(ticker: str, limit: int = 3, storage_root: Optional[str
     """Fetch recent filings for a ticker and persist to storage/raw."""
     cik = get_cik_for_ticker(ticker)
     if not cik:
-        raise ValueError(f"Ticker {ticker} not found in mapping")
+        raise ValueError(f"Ticker {ticker} not found in SEC ticker lists")
 
     client = EDGARClient()
     writer = StorageWriter(storage_root)
@@ -73,6 +73,7 @@ def fetch_latest_filings(ticker: str, limit: int = 3, storage_root: Optional[str
     return {
         "ticker": ticker.upper(),
         "cik": cik,
+        "covered": get_coverage_status(ticker),
         "saved": saved,
         "submissions_path": meta_path,
     }

@@ -1,8 +1,8 @@
 import os
 from typing import Any, Dict, List
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 
 def get_conn():
@@ -10,7 +10,7 @@ def get_conn():
         "DATABASE_URL",
         f"postgresql://{os.getenv('POSTGRES_USER', 'delta')}:{os.getenv('POSTGRES_PASSWORD', 'delta')}@{os.getenv('POSTGRES_HOST', 'db')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'delta')}",
     )
-    return psycopg2.connect(url)
+    return psycopg.connect(url, row_factory=dict_row)
 
 
 def ensure_schema() -> None:
@@ -64,7 +64,7 @@ def ensure_schema() -> None:
 def list_filings_by_ticker(ticker: str) -> List[Dict[str, Any]]:
     ensure_schema()
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT ticker, cik, accession, form, filed_at, path, submissions_path, created_at
@@ -81,7 +81,7 @@ def list_filings_by_ticker(ticker: str) -> List[Dict[str, Any]]:
 def get_filing_by_accession(accession: str) -> Dict[str, Any] | None:
     ensure_schema()
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT ticker, cik, accession, form, filed_at, path, submissions_path, created_at

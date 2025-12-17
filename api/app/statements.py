@@ -1,14 +1,12 @@
 from typing import Any, Dict, List
 
-from psycopg2.extras import RealDictCursor
-
 from .db import ensure_schema, get_conn
 
 
 def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
     ensure_schema()
     with get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT period_end, statement, line_item, value, unit

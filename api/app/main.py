@@ -1,15 +1,18 @@
 import os
 from datetime import date, datetime
+from pathlib import Path
 from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from redis import Redis
 from rq import Queue
 
 from .mock_data import MOCK_MODEL
 from .db import get_filing_by_accession, list_filings_by_ticker
-from .ticker_map import get_cik_for_ticker, list_supported_tickers
+from .ticker_map import get_cik_for_ticker, get_coverage_status, list_supported_tickers
 from .facts import list_facts_by_ticker
 from .canonical import list_canonical_by_ticker
 from .statements import get_statements_for_ticker
@@ -17,6 +20,19 @@ from .summary import get_summary
 
 
 app = FastAPI(title="deltaisland research API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost",
+        "http://127.0.0.1",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class StatementRow(BaseModel):
@@ -54,6 +70,7 @@ class EnqueueResponse(BaseModel):
     cik: str
     job_id: str
     queue: str
+    covered: bool
 
 
 class ParseEnqueueResponse(BaseModel):
@@ -124,6 +141,13 @@ class SummaryResponse(BaseModel):
     ticker: str
     periods: List[SummaryPeriod]
     filings: List[dict]
+    covered: bool
+    resolvable: bool
+    cik: str | None
+    derived: dict | None = None
+    drivers: dict | None = None
+    forecast: List[dict] | None = None
+    dropped_facts: int | None = None
 
 
 class TriggerResponse(BaseModel):
@@ -132,12 +156,28 @@ class TriggerResponse(BaseModel):
     parse_job_id: str | None
     canonical_job_id: str | None
     queue: str
+    covered: bool
+    dropped_facts: int | None = None
 
 
 @app.get("/health", tags=["health"])
 def health() -> dict:
     """Lightweight readiness probe."""
     return {"status": "ok"}
+
+
+@app.get("/artifact", tags=["ingest"])
+def get_artifact(path: str):
+    """Serve a stored artifact from RAW_STORAGE_ROOT, with basic path safety."""
+    storage_root = Path(os.getenv("RAW_STORAGE_ROOT", "storage/raw")).resolve()
+    target = Path(path).resolve()
+    try:
+        target.relative_to(storage_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Requested path outside storage root")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(target)
 
 
 @app.get("/mock/model", response_model=MockModel, tags=["mock"])
@@ -156,13 +196,17 @@ def supported_tickers() -> dict:
 def enqueue_ingest(ticker: str, limit: int = 3) -> EnqueueResponse:
     """Queue a fetch job for a ticker. Worker must be running to process."""
     cik = get_cik_for_ticker(ticker)
+    covered = get_coverage_status(ticker)
     if not cik:
-        raise HTTPException(status_code=404, detail="Ticker not found in mapping")
+        raise HTTPException(
+            status_code=404,
+            detail="Ticker not found in SEC ticker list. Ensure company_tickers.json is present.",
+        )
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     redis_conn = Redis.from_url(redis_url)
     q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
     job = q.enqueue("workers.jobs.fetch_filings.fetch_latest_filings", ticker, limit=limit)
-    return EnqueueResponse(ticker=ticker.upper(), cik=cik, job_id=job.id, queue=q.name)
+    return EnqueueResponse(ticker=ticker.upper(), cik=cik, covered=covered, job_id=job.id, queue=q.name)
 
 
 @app.get("/filings/{ticker}", response_model=List[Filing], tags=["ingest"])
@@ -242,16 +286,22 @@ def summary(ticker: str) -> SummaryResponse:
 def trigger_ingest_pipeline(ticker: str, limit: int = 1) -> TriggerResponse:
     """Trigger ingest -> parse -> canonical materialization for a ticker."""
     cik = get_cik_for_ticker(ticker)
+    covered = get_coverage_status(ticker)
     if not cik:
-        raise HTTPException(status_code=404, detail="Ticker not found in mapping")
+        raise HTTPException(
+            status_code=404,
+            detail="Ticker not found in SEC ticker list. Ensure company_tickers.json is present.",
+        )
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     redis_conn = Redis.from_url(redis_url)
     q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
     pipeline_job = q.enqueue("workers.jobs.run_pipeline.run_pipeline", ticker, limit=limit)
     return TriggerResponse(
         ticker=ticker.upper(),
+        covered=covered,
         ingest_job_id=pipeline_job.id,
         parse_job_id=pipeline_job.id,
         canonical_job_id=pipeline_job.id,
         queue=q.name,
+        dropped_facts=None,
     )

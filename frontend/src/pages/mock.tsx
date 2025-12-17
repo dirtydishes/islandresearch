@@ -101,6 +101,30 @@ function formatCurrency(value: number) {
   return `$${formatted}${suffix}`;
 }
 
+function valueClass(value: number | null | undefined) {
+  if (value === null || value === undefined) return "value-neutral";
+  if (value > 0) return "value-positive";
+  if (value < 0) return "value-negative";
+  return "value-neutral";
+}
+
+function valueIndicator(value: number | null | undefined) {
+  if (value === null || value === undefined) return "•";
+  if (value > 0) return "↑";
+  if (value < 0) return "↓";
+  return "•";
+}
+
+function renderValue(value: number | null | undefined, formatter: (v: number) => string) {
+  const cls = valueClass(value);
+  const indicator = valueIndicator(value);
+  return (
+    <span className={`value ${cls}`}>
+      {indicator} {value === null || value === undefined ? "—" : formatter(value)}
+    </span>
+  );
+}
+
 function renderStatement(lines: Record<string, StatementLine[]> | undefined) {
   if (!lines) return null;
   return (
@@ -112,7 +136,7 @@ function renderStatement(lines: Record<string, StatementLine[]> | undefined) {
             {items.map((item) => (
               <li key={`${stmt}-${item.line_item}`}>
                 <span>{item.line_item ?? "n/a"}</span>
-                <strong>{item.value !== null && item.value !== undefined ? formatCurrency(item.value) : "—"}</strong>
+                {renderValue(item.value, formatCurrency)}
               </li>
             ))}
           </ul>
@@ -159,11 +183,11 @@ export default function MockPage({ data, statements = [] }: Props) {
                     {data.statements.map((row) => (
                       <tr key={row.period}>
                         <td>{row.period}</td>
-                        <td>{formatCurrency(row.revenue)}</td>
-                        <td>{formatCurrency(row.ebitda)}</td>
-                        <td>{formatCurrency(row.net_income)}</td>
-                        <td>{formatCurrency(row.cash)}</td>
-                        <td>{formatCurrency(row.debt)}</td>
+                        <td>{renderValue(row.revenue, formatCurrency)}</td>
+                        <td>{renderValue(row.ebitda, formatCurrency)}</td>
+                        <td>{renderValue(row.net_income, formatCurrency)}</td>
+                        <td>{renderValue(row.cash, formatCurrency)}</td>
+                        <td>{renderValue(row.debt, formatCurrency)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -196,12 +220,12 @@ export default function MockPage({ data, statements = [] }: Props) {
                     {data.forecast.map((row) => (
                       <tr key={row.period}>
                         <td>{row.period}</td>
-                        <td>{formatCurrency(row.revenue)}</td>
-                        <td>{formatCurrency(row.ebitda)}</td>
-                        <td>{formatCurrency(row.net_income)}</td>
-                        <td>{formatCurrency(row.cash)}</td>
-                        <td>{formatCurrency(row.debt)}</td>
-                        <td>{row.fcf !== undefined ? formatCurrency(row.fcf) : "—"}</td>
+                        <td>{renderValue(row.revenue, formatCurrency)}</td>
+                        <td>{renderValue(row.ebitda, formatCurrency)}</td>
+                        <td>{renderValue(row.net_income, formatCurrency)}</td>
+                        <td>{renderValue(row.cash, formatCurrency)}</td>
+                        <td>{renderValue(row.debt, formatCurrency)}</td>
+                        <td>{renderValue(row.fcf ?? null, formatCurrency)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -217,19 +241,19 @@ export default function MockPage({ data, statements = [] }: Props) {
             <ul className="kv">
               <li>
                 <span>Enterprise Value</span>
-                <strong>{formatCurrency(data.valuation.enterprise_value)}</strong>
+                {renderValue(data.valuation.enterprise_value, formatCurrency)}
               </li>
               <li>
                 <span>Equity Value</span>
-                <strong>{formatCurrency(data.valuation.equity_value)}</strong>
+                {renderValue(data.valuation.equity_value, formatCurrency)}
               </li>
               <li>
                 <span>Shares Out</span>
-                <strong>{data.valuation.shares_outstanding.toFixed(1)}m</strong>
+                {renderValue(data.valuation.shares_outstanding, (v) => `${v.toFixed(1)}m`)}
               </li>
               <li>
                 <span>Implied Price</span>
-                <strong>${data.valuation.implied_share_price.toFixed(2)}</strong>
+                {renderValue(data.valuation.implied_share_price, (v) => `$${v.toFixed(2)}`)}
               </li>
             </ul>
             <p className="muted">{data.valuation.notes}</p>

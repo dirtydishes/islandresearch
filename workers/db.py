@@ -1,19 +1,27 @@
 import os
 from typing import Any, Dict, List, Optional
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - optional for non-DB unit tests
+    psycopg = None
+    dict_row = None  # type: ignore
 
 
 def get_conn():
+    if psycopg is None:
+        raise ImportError("psycopg is required to connect to Postgres. Install workers/requirements.txt.")
     url = os.getenv(
         "DATABASE_URL",
         f"postgresql://{os.getenv('POSTGRES_USER', 'delta')}:{os.getenv('POSTGRES_PASSWORD', 'delta')}@{os.getenv('POSTGRES_HOST', 'db')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'delta')}",
     )
-    return psycopg2.connect(url)
+    return psycopg.connect(url, row_factory=dict_row)
 
 
 def ensure_schema() -> None:
+    if psycopg is None:
+        raise ImportError("psycopg is required to manage schema. Install workers/requirements.txt.")
     ddl = """
     CREATE TABLE IF NOT EXISTS filings (
         id SERIAL PRIMARY KEY,

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 
 from .db import ensure_schema, get_conn
+from .canonical import is_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,15 @@ def _apply_scale(value: Optional[float], scale: Optional[str]) -> Optional[float
         return value
 
 
+def _normalize_unit(raw: Optional[str]) -> str:
+    if not raw:
+        return "USD"
+    cleaned = raw.strip()
+    if ":" in cleaned:
+        cleaned = cleaned.split(":")[-1]
+    return cleaned.upper()
+
+
 def parse_simple_table(html_content: bytes) -> List[Dict[str, Optional[str]]]:
     """Very naive parser for demo: looks for tables with revenue/ebitda/net income."""
     soup = BeautifulSoup(html_content, "html.parser")
@@ -69,6 +79,10 @@ TARGET_TAGS: Dict[str, Tuple[str, str]] = {
     # Income statement
     "us-gaap:Revenues": ("revenue", "income_statement"),
     "us-gaap:SalesRevenueNet": ("revenue", "income_statement"),
+    "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": ("revenue", "income_statement"),
+    "us-gaap:NetSales": ("revenue", "income_statement"),
+    "us-gaap:RevenuesNetOfInterestExpense": ("revenue", "income_statement"),
+    "us-gaap:OperatingRevenue": ("revenue", "income_statement"),
     "us-gaap:GrossProfit": ("gross_profit", "income_statement"),
     "us-gaap:OperatingIncomeLoss": ("operating_income", "income_statement"),
     "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments": (
@@ -76,14 +90,19 @@ TARGET_TAGS: Dict[str, Tuple[str, str]] = {
         "income_statement",
     ),
     "us-gaap:NetIncomeLoss": ("net_income", "income_statement"),
+    "us-gaap:ProfitLoss": ("net_income", "income_statement"),
     "us-gaap:CostsAndExpenses": ("total_expenses", "income_statement"),
     "us-gaap:CostOfRevenue": ("cogs", "income_statement"),
+    "us-gaap:CostOfGoodsAndServicesSold": ("cogs", "income_statement"),
     "us-gaap:ResearchAndDevelopmentExpense": ("r_and_d", "income_statement"),
     "us-gaap:SellingGeneralAndAdministrativeExpense": ("sga", "income_statement"),
+    "us-gaap:OperatingExpenses": ("operating_expenses", "income_statement"),
     "us-gaap:EarningsPerShareBasic": ("eps_basic", "income_statement"),
     "us-gaap:EarningsPerShareDiluted": ("eps_diluted", "income_statement"),
     "us-gaap:WeightedAverageNumberOfSharesOutstandingBasic": ("shares_basic", "income_statement"),
     "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding": ("shares_diluted", "income_statement"),
+    "us-gaap:CommonStockSharesOutstanding": ("shares_outstanding", "income_statement"),
+    "us-gaap:WeightedAverageNumberOfSharesOutstandingBasicAndDiluted": ("shares_diluted", "income_statement"),
     # Balance sheet
     "us-gaap:Assets": ("assets", "balance_sheet"),
     "us-gaap:AssetsCurrent": ("assets_current", "balance_sheet"),
@@ -94,10 +113,14 @@ TARGET_TAGS: Dict[str, Tuple[str, str]] = {
     "us-gaap:DebtCurrent": ("debt_current", "balance_sheet"),
     "us-gaap:DebtNoncurrent": ("debt_long_term", "balance_sheet"),
     "us-gaap:CashAndCashEquivalentsAtCarryingValue": ("cash", "balance_sheet"),
+    "us-gaap:CashCashEquivalentsAndShortTermInvestments": ("cash", "balance_sheet"),
+    "us-gaap:ShortTermInvestments": ("short_term_investments", "balance_sheet"),
+    "us-gaap:PropertyPlantAndEquipmentNet": ("ppe", "balance_sheet"),
     "us-gaap:InventoriesNet": ("inventory", "balance_sheet"),
     "us-gaap:AccountsReceivableNetCurrent": ("accounts_receivable", "balance_sheet"),
     "us-gaap:AccountsPayableCurrent": ("accounts_payable", "balance_sheet"),
     "us-gaap:StockholdersEquity": ("equity", "balance_sheet"),
+    "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": ("equity", "balance_sheet"),
     "us-gaap:LiabilitiesAndStockholdersEquity": ("liabilities_equity", "balance_sheet"),
     # Cash flow
     "us-gaap:NetCashProvidedByUsedInOperatingActivities": ("cfo", "cash_flow"),
@@ -106,6 +129,8 @@ TARGET_TAGS: Dict[str, Tuple[str, str]] = {
     "us-gaap:NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": ("cfo", "cash_flow"),
     "us-gaap:NetCashProvidedByUsedInInvestingActivitiesContinuingOperations": ("cfi", "cash_flow"),
     "us-gaap:NetCashProvidedByUsedInFinancingActivitiesContinuingOperations": ("cff", "cash_flow"),
+    "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment": ("capex", "cash_flow"),
+    "us-gaap:DepreciationDepletionAndAmortization": ("depreciation_amortization", "cash_flow"),
 }
 
 
@@ -117,17 +142,24 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
     contexts: Dict[str, Dict[str, Optional[str]]] = {}
     fallback_period_end: Optional[str] = None
     fallback_period_type: Optional[str] = None
-    for ctx in soup.find_all("xbrli:context"):
+    for ctx in soup.find_all(True):
+        if not ctx.name or not ctx.name.lower().endswith("context"):
+            continue
         ctx_id = ctx.get("id")
         if not ctx_id:
             continue
-        # Skip contexts with segments to favor consolidated values.
-        if ctx.find("xbrli:segment"):
+        # Skip contexts with explicit segments to favor consolidated values.
+        if ctx.find(lambda t: t.name and t.name.lower().endswith("segment")):
             continue
-        period = ctx.find("xbrli:period")
-        start = period.find("xbrli:startdate").get_text(strip=True) if period and period.find("xbrli:startdate") else None
-        end = period.find("xbrli:enddate").get_text(strip=True) if period and period.find("xbrli:enddate") else None
-        instant = period.find("xbrli:instant").get_text(strip=True) if period and period.find("xbrli:instant") else None
+        period = ctx.find(lambda t: t.name and t.name.lower().endswith("period"))
+        if not period:
+            continue
+        start_node = period.find(lambda t: t.name and t.name.lower().endswith("startdate"))
+        end_node = period.find(lambda t: t.name and t.name.lower().endswith("enddate"))
+        instant_node = period.find(lambda t: t.name and t.name.lower().endswith("instant"))
+        start = start_node.get_text(strip=True) if start_node else None
+        end = end_node.get_text(strip=True) if end_node else None
+        instant = instant_node.get_text(strip=True) if instant_node else None
         if instant:
             contexts[ctx_id] = {"period_end": instant, "period_type": "instant"}
             if fallback_period_end is None:
@@ -135,14 +167,9 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
                 fallback_period_type = "instant"
         else:
             contexts[ctx_id] = {"period_end": end, "period_type": "duration", "start": start}
-            # Prefer duration as fallback.
+            # Prefer duration as fallback when available.
             fallback_period_end = end or fallback_period_end
             fallback_period_type = "duration" if end else fallback_period_type
-
-    def normalize_unit(raw: Optional[str]) -> str:
-        if not raw:
-            return "USD"
-        return raw.upper()
 
     facts: List[Dict[str, Optional[str]]] = []
     for tag in soup.find_all():
@@ -150,13 +177,13 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         if not name or name not in TARGET_TAGS:
             continue
         text = tag.get_text(strip=True)
-        amount = _parse_amount(text)
-        amount = _apply_scale(amount, tag.get("scale"))
+        amount = _apply_scale(_parse_amount(text), tag.get("scale"))
+        amount = _apply_decimals(amount, tag.get("decimals"))
         ctx_ref = tag.get("contextref")
         ctx_data = contexts.get(ctx_ref or "", {})
         period_end = ctx_data.get("period_end") or fallback_period_end
         period_type = ctx_data.get("period_type") or fallback_period_type or "unknown"
-        unit = normalize_unit(tag.get("unitref") or tag.get("unit") or "USD")
+        unit = _normalize_unit(tag.get("unitref") or tag.get("unit") or "USD")
         line_item, statement = TARGET_TAGS[name]
         facts.append(
             {
@@ -182,8 +209,11 @@ def persist_fact(
     period_type: str = "duration",
     statement: str = "income_statement",
     source_path: Optional[str] = None,
-) -> None:
+) -> bool:
     ensure_schema()
+    if not is_allowed(statement, line_item):
+        logger.info("Dropping fact with disallowed line item %s/%s", statement, line_item)
+        return False
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -205,6 +235,7 @@ def persist_fact(
                 ),
             )
         conn.commit()
+    return True
 
 
 def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Dict[str, int]:
@@ -215,6 +246,7 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
         content = f.read()
     parsed_rows = parse_simple_table(content)
     inserted = 0
+    dropped = 0
     if parsed_rows:
         for row in parsed_rows:
             for key in list(row.keys()):
@@ -222,18 +254,24 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
                 if "revenue" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        persist_fact(accession, cik, ticker, None, "revenue", value, source_path=html_path)
-                        inserted += 1
+                        if persist_fact(accession, cik, ticker, None, "revenue", value, source_path=html_path):
+                            inserted += 1
+                        else:
+                            dropped += 1
                 if "net income" in lowered or "net loss" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        persist_fact(accession, cik, ticker, None, "net_income", value, source_path=html_path)
-                        inserted += 1
+                        if persist_fact(accession, cik, ticker, None, "net_income", value, source_path=html_path):
+                            inserted += 1
+                        else:
+                            dropped += 1
                 if "ebitda" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        persist_fact(accession, cik, ticker, None, "ebitda", value, source_path=html_path)
-                        inserted += 1
+                        if persist_fact(accession, cik, ticker, None, "ebitda", value, source_path=html_path):
+                            inserted += 1
+                        else:
+                            dropped += 1
     # XBRL path (primary)
     inline_facts = parse_inline_xbrl(content)
     for fact in inline_facts:
@@ -241,7 +279,7 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
             continue
         line_item = fact["line_item"] or "unknown"
         statement = fact.get("statement") or "unknown"
-        persist_fact(
+        ok = persist_fact(
             accession,
             cik,
             ticker,
@@ -253,7 +291,10 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
             statement=statement,
             source_path=html_path,
         )
-        inserted += 1
+        if ok:
+            inserted += 1
+        else:
+            dropped += 1
 
-    logger.info("Parsed %d facts from %s", inserted, html_path)
-    return {"inserted": inserted}
+    logger.info("Parsed %d facts from %s (dropped %d disallowed)", inserted, html_path, dropped)
+    return {"inserted": inserted, "dropped": dropped}

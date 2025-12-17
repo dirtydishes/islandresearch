@@ -14,6 +14,17 @@ This *is* a deterministic, auditable research engine that happens to generate pr
 
 ---
 
+## Current State (prototype)
+
+- Ingestion: Redis/RQ + FastAPI job enqueue; EDGAR fetcher saves submissions + primary HTML into `storage/raw/` and records filings in Postgres.
+- Parsing: expanded inline XBRL + HTML table scraper writes demo facts to Postgres; handles contexts/units/scale with a refetch fallback for index-only saves.
+- Canonicalization: normalized aggregation of facts by period/tag via shared helper; derived ratios and a +2% stub forecast power the `/summary` endpoint; unit tests cover parser + canonical aggregation.
+- UI: Next.js page renders canonical statements, derived metrics, filings list, and a simple forecast; mock page backed by `/mock/model`.
+- Infra: Compose stack stands up api/worker/frontend/db/redis/minio; `.env.example` seeded; ticker coverage from curated CSV with SEC JSON fallback.
+- Gaps: minimal validation/backfills, no backtests, no provenance UI, limited tag coverage beyond core tags, prefer Python 3.11/3.12 for psycopg wheels, and no production-grade audit trail.
+
+---
+
 ## 1. Core Objective
 
 Given a ticker symbol, the system must:
@@ -272,6 +283,15 @@ Click any number → see:
 - Modules map 1:1 with plan sections
 - No ML code until backtesting exists
 - No UI polish until accounting integrity passes
+
+---
+
+## Near-Term Priorities
+
+1. Parsing & canonical schema: expand XBRL coverage (contexts/units/period alignment), formalize canonical line-items, and add deterministic tests with saved filings.
+2. Pipeline reliability: improve retry/observability for RQ jobs, guard rails on storage writes, and clean gitignore for build artifacts.
+3. Model outputs: replace stub forecast with driver-based logic tied to canonical facts; expose provenance in API and UI (audit trail per number).
+4. Backtesting harness: add time-travel fixtures and coverage metrics to validate forecasts before adding any ML.
 
 ---
 

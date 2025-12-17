@@ -23,4 +23,11 @@ def run_pipeline(ticker: str, limit: int = 1, storage_root: Optional[str] = None
             continue
         parsed.append(parse_filing(accession, cik, ticker, path))
     inserted = run_materialization(ticker)
-    return {"ticker": ticker.upper(), "fetched": saved, "parsed": parsed, "canonical_inserted": inserted.get("inserted", inserted)}
+    dropped_total = sum(item.get("dropped", 0) for item in parsed)
+    return {
+        "ticker": ticker.upper(),
+        "fetched": saved,
+        "parsed": parsed,
+        "canonical_inserted": inserted.get("inserted", inserted),
+        "dropped_facts": dropped_total,
+    }
