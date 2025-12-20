@@ -124,5 +124,42 @@ class ParseRealFilingTests(unittest.TestCase):
         self.assertTrue(any(v != 0 for v in capex_values))
         self.assertTrue(any(v is not None for v in cfo_values))
 
+
+class ParseContextsWithSegmentsTests(unittest.TestCase):
+    def test_keeps_allowed_segment_dimensions_and_drops_disallowed(self) -> None:
+        sample = b"""
+        <html>
+          <body>
+            <xbrli:context id="ctxAllowed">
+              <xbrli:entity>
+                <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000000</xbrli:identifier>
+                <xbrli:segment>
+                  <xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonStockMember</xbrldi:explicitMember>
+                </xbrli:segment>
+              </xbrli:entity>
+              <xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period>
+            </xbrli:context>
+            <xbrli:context id="ctxBlocked">
+              <xbrli:entity>
+                <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000000</xbrli:identifier>
+                <xbrli:segment>
+                  <xbrldi:explicitMember dimension="custom:BusinessSegmentAxis">custom:SegmentAMember</xbrldi:explicitMember>
+                </xbrli:segment>
+              </xbrli:entity>
+              <xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period>
+            </xbrli:context>
+            <ix:nonFraction name="us-gaap:CommonStockSharesOutstanding" contextRef="ctxAllowed" unitRef="shares" decimals="0">1,000</ix:nonFraction>
+            <ix:nonFraction name="us-gaap:CashAndCashEquivalentsAtCarryingValue" contextRef="ctxBlocked" unitRef="usd" decimals="0">50</ix:nonFraction>
+          </body>
+        </html>
+        """
+        facts = parse_inline_xbrl(sample)
+        shares = [f for f in facts if f["line_item"] == "shares_outstanding"]
+        cash = [f for f in facts if f["line_item"] == "cash"]
+        self.assertEqual(len(shares), 1)
+        self.assertEqual(shares[0]["period_end"], "2023-12-31")
+        self.assertEqual(shares[0]["unit"], "SHARES")
+        self.assertEqual(len(cash), 0, "Disallowed dimension contexts should be dropped")
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ import pathlib
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
+from itertools import count
 
 import requests
 from bs4 import BeautifulSoup
@@ -93,10 +94,20 @@ class StorageWriter:
         self.root = pathlib.Path(root or os.getenv("RAW_STORAGE_ROOT", "storage/raw")).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def _unique_path(self, dir_path: pathlib.Path, base_name: str, suffix: str) -> pathlib.Path:
+        candidate = dir_path / f"{base_name}.{suffix}"
+        if not candidate.exists():
+            return candidate
+        for i in count(1):
+            alt = dir_path / f"{base_name}_{i}.{suffix}"
+            if not alt.exists():
+                return alt
+        raise RuntimeError("Unable to allocate unique storage path")
+
     def save_bytes(self, cik: str, accession: str, content: bytes, suffix: str = "html") -> str:
         dir_path = self.root / cik
         dir_path.mkdir(parents=True, exist_ok=True)
-        file_path = dir_path / f"{accession}.{suffix}"
+        file_path = self._unique_path(dir_path, accession, suffix)
         file_path.write_bytes(content)
         return str(file_path)
 
@@ -105,6 +116,6 @@ class StorageWriter:
 
         dir_path = self.root / cik
         dir_path.mkdir(parents=True, exist_ok=True)
-        file_path = dir_path / f"{name}.json"
+        file_path = self._unique_path(dir_path, name, "json")
         file_path.write_text(json.dumps(data, indent=2))
         return str(file_path)

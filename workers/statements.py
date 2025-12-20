@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from .db import ensure_schema, get_conn
+from .tag_map import STATEMENT_DISPLAY_ORDER
 
 
 Line = Dict[str, Any]
@@ -36,6 +37,16 @@ def build_statements(ticker: str, max_periods: int = 8) -> Dict[str, List[Period
     # Convert to list sorted by period_end desc and limit.
     periods: List[Period] = []
     for _, data in sorted(period_map.items(), key=lambda kv: kv[0], reverse=True):
-        data["lines"] = dict(data["lines"])
+        ordered_lines: Dict[str, list] = {}
+        for stmt, items in data["lines"].items():
+            order = STATEMENT_DISPLAY_ORDER.get(stmt, [])
+            ordered_lines[stmt] = sorted(
+                items,
+                key=lambda it: (
+                    order.index(it["line_item"]) if it.get("line_item") in order else len(order),
+                    it.get("line_item") or "",
+                ),
+            )
+        data["lines"] = ordered_lines
         periods.append(data)
     return {"periods": periods[:max_periods]}
