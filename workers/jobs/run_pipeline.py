@@ -8,9 +8,9 @@ from .materialize_canonical import run_materialization
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline(ticker: str, limit: int = 1, storage_root: Optional[str] = None) -> dict:
+def run_pipeline(ticker: str, limit: int = 6, storage_root: Optional[str] = None) -> dict:
     """
-    End-to-end helper: fetch filings, parse the first saved filing, then materialize canonical facts.
+    End-to-end helper: fetch filings, parse saved filings (default last 6), then materialize canonical facts.
     """
     fetch_result = fetch_latest_filings(ticker, limit=limit, storage_root=storage_root)
     saved = fetch_result.get("saved", [])

@@ -33,6 +33,10 @@ type Derived = {
 type SummaryPeriod = {
   period_end: string;
   values: Record<string, SummaryValue>;
+  sources?: Record<
+    string,
+    { line_item?: string | null; period_end?: string | null; statement?: string | null; unit?: string | null; path?: string | null }
+  >;
 };
 
 type SummaryResponse = {
@@ -46,6 +50,17 @@ type SummaryResponse = {
   drivers?: Record<string, { value: number | null; sources?: { line_item?: string; period_end?: string; note?: string }[] }>;
   forecast?: { period_end: string; values: Record<string, SummaryValue> }[];
   dropped_facts?: number | null;
+  coverage?: Record<
+    string,
+    {
+      period_end: string;
+      total_found: number;
+      total_expected: number;
+      by_statement: Record<string, { found: number; expected: number }>;
+    }
+  >;
+  ties?: Record<string, { period_end: string; bs_tie: number | null; cf_sum: number | null; cash_delta: number | null; cf_tie: number | null }>;
+  backtest?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
 };
 
 type Props = {
@@ -240,9 +255,13 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const drivers = summary?.drivers || null;
   const apiForecast = summary?.forecast && summary.forecast.length > 0 ? summary.forecast[0] : null;
   const latestForecast = apiForecast || buildForecastFromStatements(statements);
+  const backtest = summary?.backtest;
+  const forecastAllowed =
+    !backtest || Number.isNaN(backtest.directional_accuracy) || backtest.directional_accuracy >= 0.5 ? true : false;
   const previousSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
   const periodOptions = statements.map((p) => p.period_end);
 
+  const currentPeriodKey = selectedPeriod ?? statements[0]?.period_end ?? null;
   const currentPeriodLines = selectedPeriod
     ? statements.find((p) => p.period_end === selectedPeriod)?.lines ?? {}
     : statements[0]?.lines ?? {};
@@ -252,6 +271,10 @@ export default function Home({ ticker, statements, summary, error }: Props) {
         return idx >= 0 && idx + 1 < statements.length ? statements[idx + 1] : null;
       })()
     : statements[1] ?? null;
+  const currentSummary = summary?.periods?.find((p) => p.period_end === (selectedPeriod ?? statements[0]?.period_end));
+  const currentSummarySources = currentSummary?.sources || {};
+  const currentCoverage = currentPeriodKey ? summary?.coverage?.[currentPeriodKey] : null;
+  const currentTies = currentPeriodKey ? summary?.ties?.[currentPeriodKey] : null;
 
   const apiBaseClient = () => process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   const buildSourceUrl = (path: string | null | undefined) => {
@@ -458,24 +481,39 @@ export default function Home({ ticker, statements, summary, error }: Props) {
               <h2>Simple Forecast</h2>
               <span className="pill">T+1</span>
             </div>
-              {!latestForecast ? (
+              {!forecastAllowed && (
+                <p className="muted">Forecast hidden until backtest quality is acceptable (directional accuracy &gt;= 50%).</p>
+              )}
+              {forecastAllowed && !latestForecast ? (
                 <p className="muted">No forecast yet. Ingest data first.</p>
-              ) : (
-                <ul className="kv">
-                  {Object.entries(latestForecast.values).map(([key, val]) => {
-                    const label = humanLabel(key);
-                    return (
-                      <li key={key}>
-                        <span>{label}</span>
-                        {renderValueWithDelta(
-                          val.value,
-                          null,
-                          (v) => `${key.includes("margin") ? formatPercent(v) : formatCurrency(v)} ${formatUnit(val.unit)}`
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
+              ) : null}
+              {forecastAllowed && latestForecast && (
+                <>
+                  <ul className="kv">
+                    {Object.entries(latestForecast.values).map(([key, val]) => {
+                      const label = humanLabel(key);
+                      return (
+                        <li key={key}>
+                          <span>{label}</span>
+                          {renderValueWithDelta(
+                            val.value,
+                            null,
+                            (v) => `${key.includes("margin") ? formatPercent(v) : formatCurrency(v)} ${formatUnit(val.unit)}`
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {backtest && (
+                    <div className="muted">
+                      Backtest: MAE {formatCurrency(backtest.mae || 0)} | DA{" "}
+                      {Number.isNaN(backtest.directional_accuracy)
+                        ? "N/A"
+                        : `${(backtest.directional_accuracy * 100).toFixed(0)}%`}{" "}
+                      {backtest.samples ? `(n=${backtest.samples})` : ""}
+                    </div>
+                  )}
+                </>
               )}
             </div>
                   <div className="card">
@@ -538,36 +576,90 @@ export default function Home({ ticker, statements, summary, error }: Props) {
               ))}
             </select>
           </div>
+          {currentCoverage && (
+            <p className="muted">
+              Coverage: {currentCoverage.total_found}/{currentCoverage.total_expected} line items — IS{" "}
+              {currentCoverage.by_statement?.income_statement?.found ?? 0}/{currentCoverage.by_statement?.income_statement?.expected ?? 0},{" "}
+              BS {currentCoverage.by_statement?.balance_sheet?.found ?? 0}/{currentCoverage.by_statement?.balance_sheet?.expected ?? 0},{" "}
+              CF {currentCoverage.by_statement?.cash_flow?.found ?? 0}/{currentCoverage.by_statement?.cash_flow?.expected ?? 0}
+            </p>
+          )}
+          {currentTies && (
+            <div className="muted tie-row">
+              <span className="tie-label">Ties</span>
+              <div className="tie-metrics">
+                <div className="chip">
+                  A − (L+E): {currentTies.bs_tie === null ? "n/a" : formatCurrency(currentTies.bs_tie)}
+                </div>
+                <div className="chip">
+                  CF vs ΔCash: {currentTies.cf_tie === null ? "n/a" : formatCurrency(currentTies.cf_tie)}
+                </div>
+                <div
+                  className={`chip pill ${currentTies.status === "fail" ? "danger" : currentTies.status === "warn" ? "warn" : "success"}`}
+                  aria-label={
+                    currentTies.status === "fail"
+                      ? "Balance sheet does not tie; assets should equal liabilities plus equity."
+                      : currentTies.status === "warn"
+                      ? "Cash flow does not reconcile to the change in cash."
+                      : "Statements tie within tolerance."
+                  }
+                  data-tooltip={
+                    currentTies.status === "fail"
+                      ? "Balance sheet off: Assets ≠ Liabilities + Equity. Check equity/liability mapping."
+                      : currentTies.status === "warn"
+                      ? "Cash flow off: CFO + CFI + CFF ≠ change in cash. Missing CF components or restricted cash?"
+                      : "All statements tie within tolerance."
+                  }
+                >
+                  {currentTies.status || "ok"}
+                </div>
+              </div>
+            </div>
+          )}
           {statements.length === 0 ? (
             <p className="muted">No statements for {ticker}. Ingest and parse first.</p>
           ) : (
             <div className="statement">
               {Object.entries(currentPeriodLines).map(([stmt, items]) => (
                 <div key={stmt} className="statement-block">
-                  <h3>{humanLabel(stmt)}</h3>
+                  <h3 style={{ marginBottom: "10px" }}>{humanLabel(stmt)}</h3>
                   <ul>
-                    {items.map((item) => (
-                      <li key={`${stmt}-${item.line_item}`}>
-                        <span>
-                          {humanLabel(item.line_item)}{" "}
-                          {summary?.drivers?.[item.line_item ?? ""]?.sources && (
+                    {items.map((item) => {
+                      const driverSources = summary?.drivers?.[item.line_item ?? ""]?.sources;
+                      const source = currentSummarySources[item.line_item ?? ""];
+                      const sourceLink = source?.path ? buildSourceUrl(source.path) : null;
+                      return (
+                        <li key={`${stmt}-${item.line_item}`}>
+                          <span>{humanLabel(item.line_item)}</span>
+                          {source && (
                             <em className="muted">
-                              ({summary.drivers[item.line_item ?? ""]?.sources?.map((s) => s.period_end).join(", ")})
+                              Source: {humanLabel(source.statement || source.line_item)} @ {source.period_end || "n/a"}{" "}
+                              {formatUnit(source.unit)}{" "}
+                              {sourceLink && (
+                                <a className="link" href={sourceLink} target="_blank" rel="noreferrer">
+                                  View
+                                </a>
+                              )}
                             </em>
                           )}
-                        </span>
-                        {renderValueWithDelta(
-                          item.value,
-                          (() => {
-                            if (!prevPeriod) return null;
-                            const prevLines = prevPeriod.lines[stmt] || [];
-                            const hit = prevLines.find((l) => l.line_item === item.line_item);
-                            return hit?.value ?? null;
-                          })(),
-                          formatCurrency
-                        )}
-                      </li>
-                    ))}
+                          {driverSources && (
+                            <em className="muted">
+                              Drivers: {driverSources.map((s) => s.period_end || "n/a").join(", ")}
+                            </em>
+                          )}
+                          {renderValueWithDelta(
+                            item.value,
+                            (() => {
+                              if (!prevPeriod) return null;
+                              const prevLines = prevPeriod.lines[stmt] || [];
+                              const hit = prevLines.find((l) => l.line_item === item.line_item);
+                              return hit?.value ?? null;
+                            })(),
+                            formatCurrency
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ))}

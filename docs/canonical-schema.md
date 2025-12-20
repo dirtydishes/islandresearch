@@ -1,16 +1,33 @@
-# Canonical Schema (MVP)
+# Canonical Schema (expanded)
 
-Canonical facts capture normalized financial statements with explicit period typing, units, and provenance. Statements and line items are intentionally small; extend only when mappings and tests exist.
+Canonical facts capture normalized financial statements with explicit period typing, units, and provenance. Extend only when mappings **and** tests exist.
 
 ## Statements
 - `income_statement` (duration)
 - `balance_sheet` (instant)
 - `cash_flow` (duration)
 
-## Line items (per statement)
-- Income Statement: `revenue`, `gross_profit`, `operating_income`, `pre_tax_income`, `net_income`, `total_expenses`, `cogs`, `r_and_d`, `sga`, `operating_expenses`, `eps_basic`, `eps_diluted`, `shares_basic`, `shares_diluted`, `shares_outstanding`
-- Balance Sheet: `assets`, `assets_current`, `liabilities`, `liabilities_current`, `debt_long_term`, `debt_current`, `cash`, `short_term_investments`, `ppe`, `inventory`, `accounts_receivable`, `accounts_payable`, `equity`, `liabilities_equity`
-- Cash Flow: `cfo`, `cfi`, `cff`, `capex`, `depreciation_amortization`
+## Canonical line items (per statement)
+
+**Income Statement**
+- `revenue`, `cogs`, `gross_profit`
+- `r_and_d`, `sga`, `operating_expenses`, `operating_income`
+- `interest_income`, `interest_expense`, `other_income_expense`, `pre_tax_income`, `income_tax_expense`
+- `net_income`, `ebitda`, `total_expenses`
+- `eps_basic`, `eps_diluted`, `shares_basic`, `shares_diluted`, `shares_outstanding`
+
+**Balance Sheet**
+- `cash`, `short_term_investments`, `accounts_receivable`, `inventory`, `prepaid_expenses`
+- `assets_current`, `assets_noncurrent`, `assets`
+- `ppe`, `goodwill`, `intangible_assets`
+- `accounts_payable`, `accrued_expenses`, `deferred_revenue_current`, `deferred_revenue_noncurrent`
+- `liabilities_current`, `liabilities_noncurrent`, `liabilities`
+- `debt_current`, `debt_long_term`, `equity`, `retained_earnings`, `treasury_stock`, `minority_interest`, `liabilities_equity`
+
+**Cash Flow**
+- `net_income`, `depreciation_amortization`, `stock_compensation`, `change_working_capital`
+- `cfo` (operating), `capex`, `acquisitions`, `cfi` (investing)
+- `dividends_paid`, `share_repurchases`, `debt_issued`, `debt_repaid`, `cff` (financing)
 
 ## Units
 - `USD` for monetary values (default)
@@ -25,8 +42,10 @@ Canonical facts capture normalized financial statements with explicit period typ
 ## Validation rules
 - Only allowed statement/line_item pairs are materialized.
 - Period_end is required; duration/instant inferred from statement if not provided.
-- Units are uppercased and default to `USD` if missing.
+- Units are uppercased and default to `USD` if missing; per-share and share units are preserved.
+- Consolidated (no segment) contexts are preferred; statement-specific period types are enforced.
 
-## Coverage notes
-- Parser targets a small set of us-gaap tags (revenues, net income, assets/liabilities/equity, cash flow subtotals, capex, D&A, shares) and normalizes scale/decimals.
-- Backfill/materialization logic should remain deterministic: same input facts → same canonical rows. Extend schema only with accompanying mappings and tests.
+## Mapping + provenance
+- A GAAP tag → canonical line-item map drives parsing; multiple GAAP tags may map to the same canonical item with priority rules.
+- Provenance keeps `source_path`, `tag`, `contextref`, `unitref`, `period_end`, and `source_fact_id` so every number can be traced.
+- Backfill/materialization logic remains deterministic: same input facts → same canonical rows. Extend schema only with accompanying mappings and tests.

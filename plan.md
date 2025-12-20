@@ -288,10 +288,36 @@ Click any number → see:
 
 ## Near-Term Priorities
 
-1. Parsing & canonical schema: expand XBRL coverage (contexts/units/period alignment), formalize canonical line-items, and add deterministic tests with saved filings.
-2. Pipeline reliability: improve retry/observability for RQ jobs, guard rails on storage writes, and clean gitignore for build artifacts.
+1. Parsing & canonical schema: expanded GAAP tag map (IS/BS/CF, shares/EPS, WC, debt, equity), context filtering, unit normalization, and deterministic tests with saved filings; propagate mapping/display order to API/UI.
+2. Pipeline reliability: improve retry/observability for RQ jobs, guard rails on storage writes, and clean gitignore for build artifacts; add completeness counters (expected vs found line items) in `/summary`.
 3. Model outputs: replace stub forecast with driver-based logic tied to canonical facts; expose provenance in API and UI (audit trail per number).
 4. Backtesting harness: add time-travel fixtures and coverage metrics to validate forecasts before adding any ML.
+5. Backfill/coverage: rerun ingest → parse → canonical across covered tickers (last 6–8 filings) to ensure statement parity and surface coverage in UI.
+
+---
+
+## Data Parity Remediation (Statements)
+
+### Findings
+- UI renders the API response verbatim; no client-side filtering or enrichment (`frontend/src/pages/index.tsx`).
+- `/statements` returns raw `canonical_facts` without enrichment or ordering; DB order leaks through (`api/app/statements.py`).
+- Parser and canonicalization previously relied on a very small hard-coded tag set, dropping most GAAP facts before they could reach the UI (`workers/parser.py`, `workers/canonical.py`, `api/app/summary_utils.py`).
+- Pipeline fetch/parse defaults to a single filing (`run_pipeline` limit=1), leaving shallow history.
+- NVDA fixture shows many unmapped contexts/tags, so most line items never materialized (`storage/raw/0001045810/000104581025000230_primary.html`).
+- Root cause: minimal GAAP coverage → facts/canonical_facts nearly empty → UI shows only the few mapped tags.
+
+### Remediation (remaining)
+1. Backfill & depth
+   - Bump ingest/parse limit to last 6–8 filings per ticker and add a backfill job for historical accessions to populate a full history.
+2. Completeness reporting
+   - Compute expected vs found line items per period/statement, expose in `/summary`, and surface in the UI so users see gaps.
+3. UI ordering & clarity
+   - Apply canonical display order in `/statements` responses and add section labels/empty-state hints when coverage is partial.
+4. Validation & integrity
+   - Add accounting tie checks (A = L + E, CF ties) and fail builds/pipeline steps on violation.
+   - Add regression tests for the tag-map to prevent coverage regressions; keep fixture-based assertions for NVDA/AMZN/AAPL parity.
+5. Provenance surfacing
+   - Ensure `/summary` and `/statements` include source paths/contexts for each number so UI can show audit trail links.
 
 ---
 

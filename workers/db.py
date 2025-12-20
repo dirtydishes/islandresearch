@@ -39,6 +39,7 @@ def ensure_schema() -> None:
         accession TEXT NOT NULL,
         cik TEXT NOT NULL,
         ticker TEXT NOT NULL,
+        period_start DATE,
         period_end DATE,
         period_type TEXT,
         statement TEXT,

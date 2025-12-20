@@ -2,7 +2,16 @@ from typing import Any, Dict, List, Optional
 
 from .db import ensure_schema, get_conn
 from .ticker_map import get_cik_for_ticker, get_coverage_status
-from .summary_utils import build_forecast, compute_drivers, filter_allowed
+from .summary_utils import (
+    ALLOWED_LINE_ITEMS,
+    ALLOWED_STATEMENTS,
+    build_forecast,
+    compute_drivers,
+    compute_revenue_backtest,
+    compute_tie_checks,
+    compute_coverage,
+    filter_allowed,
+)
 
 
 def get_summary(ticker: str) -> Dict[str, Any]:
@@ -10,19 +19,28 @@ def get_summary(ticker: str) -> Dict[str, Any]:
     t = ticker.upper()
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
+    allowed_line_items = sorted({item for items in ALLOWED_LINE_ITEMS.values() for item in items})
+    allowed_statements = sorted(ALLOWED_STATEMENTS)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT period_end, statement, line_item, value, unit
-                FROM canonical_facts
-                WHERE ticker = %s
-                  AND period_end IS NOT NULL
-                  AND statement IN ('income_statement','balance_sheet','cash_flow')
-                  AND line_item IN ('revenue','net_income','operating_income','gross_profit','cash','assets','liabilities','equity','cfo','cfi','cff','debt_long_term','debt_current')
-                ORDER BY period_end DESC;
+                SELECT cf.period_start,
+                       cf.period_end,
+                       cf.statement,
+                       cf.line_item,
+                       cf.value,
+                       cf.unit,
+                       f.source_path
+                FROM canonical_facts cf
+                LEFT JOIN facts f ON f.id = cf.source_fact_id
+                WHERE cf.ticker = %s
+                  AND cf.period_end IS NOT NULL
+                  AND cf.statement = ANY(%s)
+                  AND cf.line_item = ANY(%s)
+                ORDER BY cf.period_end DESC;
                 """,
-                (t,),
+                (t, allowed_statements, allowed_line_items),
             )
             facts = cur.fetchall()
 
@@ -46,19 +64,23 @@ def get_summary(ticker: str) -> Dict[str, Any]:
         metrics[period]["values"][row["line_item"]] = {
             "value": float(row["value"]) if row["value"] is not None else None,
             "unit": row["unit"],
+            "start": row.get("period_start").isoformat() if row.get("period_start") else None,
         }
         metrics[period]["sources"][row["line_item"]] = {
             "period_end": period,
             "line_item": row["line_item"],
             "statement": row["statement"],
             "unit": row["unit"],
+            "path": row.get("source_path"),
         }
 
+    allowed_metrics = filter_allowed(metrics)
+
     def _get_latest_metric(name: str) -> Optional[float]:
-        if not metrics:
+        if not allowed_metrics:
             return None
-        latest_period = sorted(metrics.keys(), reverse=True)[0]
-        return metrics[latest_period]["values"].get(name, {}).get("value")  # type: ignore[index]
+        latest_period = sorted(allowed_metrics.keys(), reverse=True)[0]
+        return allowed_metrics[latest_period]["values"].get(name, {}).get("value")  # type: ignore[index]
 
     # Derived metrics from the latest period.
     revenue = _get_latest_metric("revenue")
@@ -87,8 +109,10 @@ def get_summary(ticker: str) -> Dict[str, Any]:
     }
 
     # Filter metrics to canonical schema and compute driver-based forecast.
-    allowed_metrics = filter_allowed(metrics)
     drivers = compute_drivers(allowed_metrics)
+    backtest = compute_revenue_backtest(allowed_metrics)
+    coverage = compute_coverage(allowed_metrics)
+    ties = compute_tie_checks(allowed_metrics)
     forecast: List[Dict[str, Any]] = []
     if allowed_metrics:
         latest_period = sorted(allowed_metrics.keys(), reverse=True)[0]
@@ -96,7 +120,7 @@ def get_summary(ticker: str) -> Dict[str, Any]:
 
     return {
         "ticker": t,
-        "periods": list(metrics.values()),
+        "periods": list(allowed_metrics.values()),
         "filings": [dict(f) for f in filings],
         "covered": covered,
         "resolvable": cik is not None,
@@ -104,4 +128,7 @@ def get_summary(ticker: str) -> Dict[str, Any]:
         "derived": derived,
         "drivers": drivers,
         "forecast": forecast,
+        "backtest": backtest,
+        "coverage": coverage,
+        "ties": ties,
     }

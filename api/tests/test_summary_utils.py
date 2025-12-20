@@ -7,6 +7,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "app"))
 import unittest
 
 from summary_utils import build_forecast, compute_drivers, filter_allowed
+from summary_utils import compute_backtest_metrics, compute_revenue_backtest
 
 
 class SummaryUtilsTests(unittest.TestCase):
@@ -53,12 +54,72 @@ class SummaryUtilsTests(unittest.TestCase):
                 "values": {
                     "revenue": {"value": 100.0, "unit": "USD"},
                     "unknown_metric": {"value": 5.0, "unit": "USD"},
+                },
+                "sources": {
+                    "revenue": {"line_item": "revenue", "period_end": "2024-12-31"},
+                    "unknown_metric": {"line_item": "unknown_metric", "period_end": "2024-12-31"},
+                },
+            },
+            "2023-12-31": {
+                "values": {
+                    "unknown_metric": {"value": 5.0, "unit": "USD"},
                 }
             }
         }
         filtered = filter_allowed(noisy)
         self.assertIn("revenue", filtered["2024-12-31"]["values"])
         self.assertNotIn("unknown_metric", filtered["2024-12-31"]["values"])
+        self.assertIn("revenue", filtered["2024-12-31"]["sources"])
+        self.assertNotIn("2023-12-31", filtered)
+
+    def test_compute_drivers_fallback_growth_and_share_source(self) -> None:
+        metrics = {
+            "2024-12-31": {
+                "values": {
+                    "revenue": {"value": 50.0, "unit": "USD"},
+                    "gross_profit": {"value": 20.0, "unit": "USD"},
+                    "operating_income": {"value": 10.0, "unit": "USD"},
+                    "net_income": {"value": 8.0, "unit": "USD"},
+                    "cfo": {"value": 12.0, "unit": "USD"},
+                    "cfi": {"value": -2.0, "unit": "USD"},
+                    "shares_basic": {"value": 4.0, "unit": "SHARES"},
+                },
+                "sources": {"revenue": {"line_item": "revenue", "period_end": "2024-12-31"}},
+            }
+        }
+        filtered = filter_allowed(metrics)
+        drivers = compute_drivers(filtered)
+        self.assertAlmostEqual(drivers["revenue_growth"]["value"], 0.02)
+        self.assertTrue(any(src.get("note") == "fallback_growth" for src in drivers["revenue_growth"]["sources"]))
+        self.assertEqual(drivers["shares"]["value"], 4.0)
+        self.assertEqual(drivers["shares"]["sources"][0]["line_item"], "shares_basic")
+
+    def test_compute_backtest_metrics(self) -> None:
+        actuals = [100.0, 120.0, 80.0]
+        forecasts = [90.0, 130.0, 70.0]
+        lower = [80.0, 110.0, 60.0]
+        upper = [110.0, 140.0, 90.0]
+        metrics = compute_backtest_metrics(actuals, forecasts, lower, upper)
+        self.assertAlmostEqual(metrics["mae"], 10.0)
+        self.assertAlmostEqual(metrics["mape"], (0.1 + (10.0 / 120.0) + (10.0 / 80.0)) / 3)
+        self.assertAlmostEqual(metrics["directional_accuracy"], 1.0)
+        self.assertAlmostEqual(metrics["interval_coverage"], 1.0)
+
+    def test_backtest_metrics_len_mismatch(self) -> None:
+        with self.assertRaises(ValueError):
+            compute_backtest_metrics([1.0], [1.0, 2.0])
+
+    def test_compute_revenue_backtest(self) -> None:
+        metrics = {
+            "2023-12-31": {"values": {"revenue": {"value": 80.0, "unit": "USD"}}},
+            "2024-12-31": {"values": {"revenue": {"value": 100.0, "unit": "USD"}}},
+            "2025-12-31": {"values": {"revenue": {"value": 120.0, "unit": "USD"}}},
+        }
+        backtest = compute_revenue_backtest(metrics)
+        self.assertIsNotNone(backtest)
+        assert backtest is not None
+        self.assertEqual(backtest["samples"], 2)
+        self.assertTrue(backtest["mae"] >= 0)
 
 
 if __name__ == "__main__":

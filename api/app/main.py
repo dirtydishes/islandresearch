@@ -148,6 +148,8 @@ class SummaryResponse(BaseModel):
     drivers: dict | None = None
     forecast: List[dict] | None = None
     dropped_facts: int | None = None
+    coverage: dict | None = None
+    ties: dict | None = None
 
 
 class TriggerResponse(BaseModel):
@@ -283,8 +285,8 @@ def summary(ticker: str) -> SummaryResponse:
 
 
 @app.post("/trigger/{ticker}", response_model=TriggerResponse, tags=["ingest"])
-def trigger_ingest_pipeline(ticker: str, limit: int = 1) -> TriggerResponse:
-    """Trigger ingest -> parse -> canonical materialization for a ticker."""
+def trigger_ingest_pipeline(ticker: str, limit: int = 6) -> TriggerResponse:
+    """Trigger ingest -> parse -> canonical materialization for a ticker (default last 6 filings)."""
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
     if not cik:

@@ -1,19 +1,24 @@
 from typing import Dict, List, Optional, Tuple
 
-# Allowed statements and line items mirrored from workers/canonical.py
+# Allowed statements and line items mirrored from workers/tag_map.py
 ALLOWED_STATEMENTS = {"income_statement", "balance_sheet", "cash_flow"}
 ALLOWED_LINE_ITEMS = {
     "income_statement": {
         "revenue",
-        "gross_profit",
-        "operating_income",
-        "pre_tax_income",
-        "net_income",
-        "total_expenses",
         "cogs",
+        "gross_profit",
         "r_and_d",
         "sga",
         "operating_expenses",
+        "operating_income",
+        "interest_income",
+        "interest_expense",
+        "other_income_expense",
+        "pre_tax_income",
+        "income_tax_expense",
+        "net_income",
+        "ebitda",
+        "total_expenses",
         "eps_basic",
         "eps_diluted",
         "shares_basic",
@@ -21,43 +26,74 @@ ALLOWED_LINE_ITEMS = {
         "shares_outstanding",
     },
     "balance_sheet": {
-        "assets",
-        "assets_current",
-        "liabilities",
-        "liabilities_current",
-        "debt_long_term",
-        "debt_current",
         "cash",
         "short_term_investments",
-        "ppe",
-        "inventory",
         "accounts_receivable",
+        "inventory",
+        "prepaid_expenses",
+        "assets_current",
+        "assets_noncurrent",
+        "assets",
+        "ppe",
+        "goodwill",
+        "intangible_assets",
         "accounts_payable",
+        "accrued_expenses",
+        "deferred_revenue_current",
+        "deferred_revenue_noncurrent",
+        "liabilities_current",
+        "liabilities_noncurrent",
+        "liabilities",
+        "debt_current",
+        "debt_long_term",
         "equity",
+        "retained_earnings",
+        "treasury_stock",
+        "minority_interest",
         "liabilities_equity",
     },
     "cash_flow": {
-        "cfo",
-        "cfi",
-        "cff",
-        "capex",
+        "net_income",
         "depreciation_amortization",
+        "stock_compensation",
+        "change_working_capital",
+        "cfo",
+        "capex",
+        "acquisitions",
+        "cfi",
+        "dividends_paid",
+        "share_repurchases",
+        "debt_issued",
+        "debt_repaid",
+        "cff",
+        "fx_on_cash",
+        "change_in_cash",
+        "change_in_restricted_cash",
     },
 }
 
 
 def filter_allowed(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Dict[str, Dict[str, Dict[str, Optional[float]]]]:
-    """Drop any line items not in the canonical schema."""
+    """Drop any line items not in the canonical schema and remove empty periods."""
     filtered: Dict[str, Dict[str, Dict[str, Optional[float]]]] = {}
     for period, payload in metrics.items():
         values = payload.get("values", {})
         kept: Dict[str, Dict[str, Optional[float]]] = {}
+        kept_sources: Dict[str, Dict[str, Optional[float]]] = {}
         for line_item, val in values.items():
             for stmt, allowed in ALLOWED_LINE_ITEMS.items():
                 if line_item in allowed:
                     kept[line_item] = val
+                    source = payload.get("sources", {}).get(line_item)
+                    if source:
+                        kept_sources[line_item] = source
                     break
-        filtered[period] = {"values": kept, "sources": payload.get("sources", {})}
+        if kept:
+            filtered[period] = {
+                "period_end": payload.get("period_end", period),
+                "values": kept,
+                "sources": kept_sources,
+            }
     return filtered
 
 
@@ -97,11 +133,14 @@ def compute_drivers(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -
     net_income = get_value(latest_values, "net_income")
     cfo = get_value(latest_values, "cfo")
     cfi = get_value(latest_values, "cfi")
-    shares = (
-        get_value(latest_values, "shares_diluted")
-        or get_value(latest_values, "shares_outstanding")
-        or get_value(latest_values, "shares_basic")
-    )
+    shares_sources: List[Dict[str, str]] = []
+    shares = None
+    for key in ("shares_diluted", "shares_outstanding", "shares_basic"):
+        candidate = get_value(latest_values, key)
+        if candidate is not None:
+            shares = candidate
+            shares_sources = [{"line_item": key, "period_end": latest}]
+            break
 
     def margin(num: Optional[float], den: Optional[float]) -> Optional[float]:
         if num is None or den is None or den == 0:
@@ -136,7 +175,7 @@ def compute_drivers(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -
                 {"line_item": "revenue", "period_end": latest},
             ],
         },
-        "shares": {"value": shares, "sources": [{"line_item": "shares_diluted", "period_end": latest}]},
+        "shares": {"value": shares, "sources": shares_sources},
     }
     return drivers
 
@@ -184,3 +223,184 @@ def build_forecast(
             "assumptions": drivers,
         }
     ]
+
+
+def compute_backtest_metrics(
+    actuals: List[Optional[float]],
+    forecasts: List[Optional[float]],
+    interval_low: Optional[List[Optional[float]]] = None,
+    interval_high: Optional[List[Optional[float]]] = None,
+) -> Dict[str, float]:
+    """Lightweight scoring helper for backtesting."""
+    if len(actuals) != len(forecasts):
+        raise ValueError("actuals and forecasts must be the same length")
+    if interval_low and len(interval_low) != len(actuals):
+        raise ValueError("interval_low must match length of actuals")
+    if interval_high and len(interval_high) != len(actuals):
+        raise ValueError("interval_high must match length of actuals")
+
+    paired = [(a, f) for a, f in zip(actuals, forecasts) if a is not None and f is not None]
+    if not paired:
+        return {"mae": float("nan"), "mape": float("nan"), "directional_accuracy": float("nan"), "interval_coverage": float("nan")}
+
+    abs_errors = [abs(a - f) for a, f in paired]
+    mae = sum(abs_errors) / len(abs_errors)
+
+    mape_denoms = [abs(a) for a, _ in paired if a not in (0, None)]
+    mape_vals = [abs(a - f) / abs(a) for a, f in paired if a not in (0, None)]
+    mape = sum(mape_vals) / len(mape_vals) if mape_vals else float("nan")
+
+    directional_hits = [1 for a, f in paired if (a >= 0 and f >= 0) or (a < 0 and f < 0)]
+    directional_accuracy = sum(directional_hits) / len(paired)
+
+    coverage_points = []
+    if interval_low and interval_high:
+        for idx, (a, low, high) in enumerate(zip(actuals, interval_low, interval_high)):
+            if a is None or low is None or high is None:
+                continue
+            coverage_points.append(1 if low <= a <= high else 0)
+    interval_coverage = sum(coverage_points) / len(coverage_points) if coverage_points else float("nan")
+
+    return {
+        "mae": mae,
+        "mape": mape,
+        "directional_accuracy": directional_accuracy,
+        "interval_coverage": interval_coverage,
+    }
+
+
+def compute_revenue_backtest(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Optional[Dict[str, float]]:
+    """
+    Build simple revenue forecasts from sequential periods and score against actuals.
+    Uses drivers from the prior period (with fallback growth) to project the next.
+    """
+    if not metrics or len(metrics) < 2:
+        return None
+
+    periods = sorted(metrics.keys())
+    actuals: List[float] = []
+    forecasts: List[float] = []
+
+    for idx in range(1, len(periods)):
+        prev_period = periods[idx - 1]
+        curr_period = periods[idx]
+        prev_metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]] = {prev_period: metrics[prev_period]}
+        if idx >= 2:
+            prev_metrics[periods[idx - 2]] = metrics[periods[idx - 2]]
+        drivers_prev = compute_drivers(prev_metrics)
+
+        prev_revenue = metrics[prev_period]["values"].get("revenue", {}).get("value")
+        if prev_revenue is None:
+            continue
+        growth = drivers_prev.get("revenue_growth", {}).get("value") or 0.0
+        forecast_revenue = prev_revenue * (1 + growth)
+
+        actual_revenue = metrics[curr_period]["values"].get("revenue", {}).get("value")
+        if actual_revenue is None:
+            continue
+
+        forecasts.append(forecast_revenue)
+        actuals.append(actual_revenue)
+
+    if not actuals or not forecasts:
+        return None
+    scored = compute_backtest_metrics(actuals, forecasts)
+    scored["samples"] = len(actuals)
+    return scored
+
+
+def compute_coverage(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Dict[str, Dict]:
+    """
+    Compute coverage per period: expected vs found counts by statement and overall.
+    """
+    coverage: Dict[str, Dict] = {}
+    for period, payload in metrics.items():
+        expected_by_stmt = {stmt: len(items) for stmt, items in ALLOWED_LINE_ITEMS.items()}
+        found_by_stmt = {stmt: 0 for stmt in ALLOWED_STATEMENTS}
+        values = payload.get("values", {})
+        for line_item in values.keys():
+            for stmt, items in ALLOWED_LINE_ITEMS.items():
+                if line_item in items:
+                    found_by_stmt[stmt] += 1
+                    break
+        coverage[period] = {
+            "period_end": payload.get("period_end", period),
+            "total_found": sum(found_by_stmt.values()),
+            "total_expected": sum(expected_by_stmt.values()),
+            "by_statement": {
+                stmt: {"found": found_by_stmt[stmt], "expected": expected_by_stmt[stmt]} for stmt in sorted(ALLOWED_STATEMENTS)
+            },
+        }
+    return coverage
+
+
+def compute_tie_checks(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Dict[str, Dict[str, Optional[float]]]:
+    """
+    Compute simple tie checks per period:
+    - Balance sheet: assets vs liabilities + equity
+    - Cash flow: cfo + cfi + cff vs change in cash between periods
+    """
+    ties: Dict[str, Dict[str, Optional[float]]] = {}
+    ordered_periods = sorted(metrics.keys(), reverse=True)
+
+    def quarterized(line_item: str, idx: int) -> Optional[float]:
+        """If values are YTD, derive quarter flow by differencing prior period when start dates advance."""
+        period = ordered_periods[idx]
+        current_vals = metrics[period]["values"]
+        val = current_vals.get(line_item, {}).get("value")
+        if val is None:
+            return None
+        start = current_vals.get(line_item, {}).get("start")
+        prev_period = ordered_periods[idx + 1] if idx + 1 < len(ordered_periods) else None
+        if prev_period:
+            prev_vals = metrics[prev_period]["values"]
+            prev_val = prev_vals.get(line_item, {}).get("value")
+            prev_start = prev_vals.get(line_item, {}).get("start")
+            if prev_val is not None and prev_start and start:
+                try:
+                    if prev_start < start:
+                        return val - prev_val
+                except Exception:
+                    pass
+        return val
+
+    for idx, period in enumerate(ordered_periods):
+        payload = metrics[period]
+        vals = payload.get("values", {})
+        liabilities_equity = vals.get("liabilities_equity", {}).get("value")
+        assets = vals.get("assets", {}).get("value")
+        liabilities = vals.get("liabilities", {}).get("value")
+        equity = vals.get("equity", {}).get("value")
+        if liabilities_equity is not None and assets is not None:
+            bs_delta = assets - liabilities_equity
+        else:
+            bs_delta = assets - (liabilities + equity) if None not in (assets, liabilities, equity) else None
+
+        cfo = quarterized("cfo", idx)
+        cfi = quarterized("cfi", idx)
+        cff = quarterized("cff", idx)
+        fx_on_cash = quarterized("fx_on_cash", idx) or 0
+        change_rc = quarterized("change_in_restricted_cash", idx) or 0
+        cf_sum = cfo + cfi + cff + fx_on_cash + change_rc if None not in (cfo, cfi, cff) else None
+
+        prev_period = ordered_periods[idx + 1] if idx + 1 < len(ordered_periods) else None
+        prev_cash = metrics.get(prev_period, {}).get("values", {}).get("cash", {}).get("value") if prev_period else None
+        curr_cash = vals.get("cash", {}).get("value")
+        cash_delta = vals.get("change_in_cash", {}).get("value") if vals.get("change_in_cash") else (
+            curr_cash - prev_cash if None not in (curr_cash, prev_cash) else None
+        )
+        cf_tie = (cf_sum - cash_delta) if None not in (cf_sum, cash_delta) else None
+
+        ties[period] = {
+            "period_end": payload.get("period_end", period),
+            "bs_tie": bs_delta,
+            "cf_sum": cf_sum,
+            "cash_delta": cash_delta,
+            "cf_tie": cf_tie,
+            "status": "fail"
+            if (bs_delta is not None and abs(bs_delta) > 1e-2)
+            else "warn"
+            if (cf_tie is not None and abs(cf_tie) > 1e-2)
+            else "ok",
+        }
+    return ties
