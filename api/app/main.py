@@ -18,7 +18,6 @@ from .canonical import list_canonical_by_ticker
 from .statements import get_statements_for_ticker
 from .summary import get_summary
 
-
 app = FastAPI(title="deltaisland research API", version="0.1.0")
 
 app.add_middleware(
@@ -195,7 +194,7 @@ def supported_tickers() -> dict:
 
 
 @app.post("/ingest/{ticker}", response_model=EnqueueResponse, tags=["ingest"])
-def enqueue_ingest(ticker: str, limit: int = 3) -> EnqueueResponse:
+def enqueue_ingest(ticker: str, limit: int = 12) -> EnqueueResponse:
     """Queue a fetch job for a ticker. Worker must be running to process."""
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
@@ -205,10 +204,22 @@ def enqueue_ingest(ticker: str, limit: int = 3) -> EnqueueResponse:
             detail="Ticker not found in SEC ticker list. Ensure company_tickers.json is present.",
         )
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    redis_conn = Redis.from_url(redis_url)
-    q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
-    job = q.enqueue("workers.jobs.fetch_filings.fetch_latest_filings", ticker, limit=limit)
-    return EnqueueResponse(ticker=ticker.upper(), cik=cik, covered=covered, job_id=job.id, queue=q.name)
+    try:
+        redis_conn = Redis.from_url(redis_url)
+        q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
+        job = q.enqueue("workers.jobs.fetch_filings.fetch_latest_filings", ticker, limit=limit)
+        return EnqueueResponse(ticker=ticker.upper(), cik=cik, covered=covered, job_id=job.id, queue=q.name)
+    except Exception:
+        # Fall back to inline execution if Redis/worker is not available and workers package is present.
+        try:
+            from workers.jobs.run_pipeline import run_pipeline  # type: ignore
+        except Exception as exc:  # pragma: no cover - runtime guard
+            raise HTTPException(
+                status_code=503,
+                detail=f"Ingestion unavailable (queue down and workers module missing in API image): {exc}",
+            )
+        run_pipeline(ticker, limit=limit)
+        return EnqueueResponse(ticker=ticker.upper(), cik=cik, covered=covered, job_id=None, queue="inline")
 
 
 @app.get("/filings/{ticker}", response_model=List[Filing], tags=["ingest"])
@@ -279,14 +290,16 @@ def get_statements(ticker: str, limit: int = 8) -> Dict[str, List[StatementPerio
 
 @app.get("/summary/{ticker}", response_model=SummaryResponse, tags=["summary"])
 def summary(ticker: str) -> SummaryResponse:
-    data = get_summary(ticker)
-    # Return empty structures instead of 404 so UI can show graceful empty state.
+    try:
+        data = get_summary(ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load summary for {ticker}: {exc}")
     return data
 
 
 @app.post("/trigger/{ticker}", response_model=TriggerResponse, tags=["ingest"])
-def trigger_ingest_pipeline(ticker: str, limit: int = 6) -> TriggerResponse:
-    """Trigger ingest -> parse -> canonical materialization for a ticker (default last 6 filings)."""
+def trigger_ingest_pipeline(ticker: str, limit: int = 12) -> TriggerResponse:
+    """Trigger ingest -> parse -> canonical materialization for a ticker (default last 12 filings)."""
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
     if not cik:
@@ -295,15 +308,35 @@ def trigger_ingest_pipeline(ticker: str, limit: int = 6) -> TriggerResponse:
             detail="Ticker not found in SEC ticker list. Ensure company_tickers.json is present.",
         )
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    redis_conn = Redis.from_url(redis_url)
-    q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
-    pipeline_job = q.enqueue("workers.jobs.run_pipeline.run_pipeline", ticker, limit=limit)
-    return TriggerResponse(
-        ticker=ticker.upper(),
-        covered=covered,
-        ingest_job_id=pipeline_job.id,
-        parse_job_id=pipeline_job.id,
-        canonical_job_id=pipeline_job.id,
-        queue=q.name,
-        dropped_facts=None,
-    )
+    try:
+        redis_conn = Redis.from_url(redis_url)
+        q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
+        pipeline_job = q.enqueue("workers.jobs.run_pipeline.run_pipeline", ticker, limit=limit)
+        return TriggerResponse(
+            ticker=ticker.upper(),
+            covered=covered,
+            ingest_job_id=pipeline_job.id,
+            parse_job_id=pipeline_job.id,
+            canonical_job_id=pipeline_job.id,
+            queue=q.name,
+            dropped_facts=None,
+        )
+    except Exception:
+        # If Redis/worker is unavailable, try to run inline if workers module is present.
+        try:
+            from workers.jobs.run_pipeline import run_pipeline  # type: ignore
+        except Exception as exc:  # pragma: no cover - runtime guard
+            raise HTTPException(
+                status_code=503,
+                detail=f"Ingestion unavailable (queue down and workers module missing in API image): {exc}",
+            )
+        result = run_pipeline(ticker, limit=limit)
+        return TriggerResponse(
+            ticker=ticker.upper(),
+            covered=covered,
+            ingest_job_id=None,
+            parse_job_id=None,
+            canonical_job_id=None,
+            queue="inline",
+            dropped_facts=result.get("dropped_facts") if isinstance(result, dict) else None,
+        )

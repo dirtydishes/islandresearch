@@ -12,20 +12,24 @@ def _select_recent_accessions(submissions: Dict[str, Any], limit: int) -> List[s
     recent = submissions.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
+    allowed_forms = {"10-K", "10-Q", "20-F", "40-F"}
     selected: List[str] = []
     for form, acc in zip(forms, accessions):
-        if form in {"10-K", "10-Q"}:
+        if form in allowed_forms:
             selected.append(acc)
         if len(selected) >= limit:
             break
     return selected
 
 
-def fetch_latest_filings(ticker: str, limit: int = 3, storage_root: Optional[str] = None) -> Dict[str, Any]:
+def fetch_latest_filings(ticker: str, limit: int = 12, storage_root: Optional[str] = None) -> Dict[str, Any]:
     """Fetch recent filings for a ticker and persist to storage/raw."""
     cik = get_cik_for_ticker(ticker)
     if not cik:
-        raise ValueError(f"Ticker {ticker} not found in SEC ticker lists")
+        raise ValueError(
+            f"Ticker {ticker} not found in SEC ticker lists. Ensure data/company_tickers.json or /data mount exists, "
+            "or that the SEC download succeeded (set EDGAR_USER_AGENT and allow outbound HTTPS)."
+        )
 
     client = EDGARClient()
     writer = StorageWriter(storage_root)
@@ -38,9 +42,10 @@ def fetch_latest_filings(ticker: str, limit: int = 3, storage_root: Optional[str
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
     filing_dates = recent.get("filingDate", [])
+    allowed_forms = {"10-K", "10-Q", "20-F", "40-F"}
 
     for form, accession, filed_at in zip(forms, accessions, filing_dates):
-        if form not in {"10-K", "10-Q"}:
+        if form not in allowed_forms:
             continue
         if len(saved) >= limit:
             break

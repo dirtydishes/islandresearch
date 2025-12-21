@@ -72,13 +72,14 @@ type Props = {
 
 export async function getServerSideProps(ctx: any) {
   const ticker = (ctx.query.ticker || "AAPL").toString().toUpperCase();
+  // Prefer the internal API host for SSR (works in Docker); fall back to public base or api hostname.
   const apiBase = process.env.API_INTERNAL_BASE || process.env.NEXT_PUBLIC_API_BASE || "http://api:8000";
   let statements: StatementPeriod[] = [];
   let summary: SummaryResponse | null = null;
   let error: string | undefined;
   try {
     const [stmtRes, summaryRes] = await Promise.all([
-      fetch(`${apiBase}/statements/${ticker}?limit=20`),
+      fetch(`${apiBase}/statements/${ticker}?limit=12`),
       fetch(`${apiBase}/summary/${ticker}`),
     ]);
     const stmtJson = stmtRes.ok ? await stmtRes.json() : { periods: [] };
@@ -94,7 +95,8 @@ export async function getServerSideProps(ctx: any) {
   return { props: { ticker, statements, summary, error: error || null } };
 }
 
-function formatCurrency(value: number | null) {
+function formatCurrency(value: number | null, opts: { withSign?: boolean } = {}) {
+  const withSign = opts.withSign !== undefined ? opts.withSign : true;
   if (value === null || value === undefined) return "—";
   const num = Number(value);
   if (Number.isNaN(num)) return "—";
@@ -120,7 +122,8 @@ function formatCurrency(value: number | null) {
     minimumFractionDigits: floored % 1 === 0 ? 0 : Math.min(decimals, 3),
     maximumFractionDigits: decimals,
   });
-  return `$${formatted}${suffix}`;
+  const sign = withSign && num < 0 ? "-" : "";
+  return `${sign}$${formatted}${suffix}`;
 }
 
 function formatPercent(value: number | null) {
@@ -194,9 +197,15 @@ function renderValueWithDelta(
       </span>
       <span className={`delta ${dClass}`}>
         {hasPrev
-          ? `${diff !== null ? (diff > 0 ? "+" : "") + formatCurrency(diff) : ""}${
-              pct !== null ? ` (${pct > 0 ? "+" : ""}${pct.toFixed(2)}%)` : ""
-            }`
+          ? (() => {
+              const diffDisplay =
+                diff === null
+                  ? ""
+                  : `${diff > 0 ? "+" : "-"}${formatCurrency(Math.abs(diff), { withSign: false })}`;
+              const pctDisplay =
+                pct !== null ? ` (${pct > 0 ? "+" : ""}${pct.toFixed(2)}%)` : "";
+              return `${diffDisplay}${pctDisplay}`;
+            })()
           : "Δ N/A"}
       </span>
     </span>
@@ -259,6 +268,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const forecastAllowed =
     !backtest || Number.isNaN(backtest.directional_accuracy) || backtest.directional_accuracy >= 0.5 ? true : false;
   const previousSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
+  const prevSummaryValues = previousSummary?.values || null;
   const periodOptions = statements.map((p) => p.period_end);
 
   const currentPeriodKey = selectedPeriod ?? statements[0]?.period_end ?? null;
@@ -275,8 +285,9 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const currentSummarySources = currentSummary?.sources || {};
   const currentCoverage = currentPeriodKey ? summary?.coverage?.[currentPeriodKey] : null;
   const currentTies = currentPeriodKey ? summary?.ties?.[currentPeriodKey] : null;
+  const prevSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
 
-  const apiBaseClient = () => process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
+  const apiBaseClient = () => process.env.NEXT_PUBLIC_API_BASE || "/api";
   const buildSourceUrl = (path: string | null | undefined) => {
     if (!path) return null;
     const base = apiBaseClient().replace(/\/$/, "");
@@ -299,7 +310,11 @@ export default function Home({ ticker, statements, summary, error }: Props) {
     setTriggerError(null);
     try {
       const base = apiBaseClient();
-      const res = await fetch(`${base}/trigger/${input.trim().toUpperCase() || ticker}`, { method: "POST" });
+      const ingestLimit = 12;
+      const res = await fetch(
+        `${base}/trigger/${input.trim().toUpperCase() || ticker}?limit=${ingestLimit}`,
+        { method: "POST" }
+      );
       if (!res.ok) {
         let message = `Trigger failed (${res.status})`;
         try {
@@ -394,7 +409,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>Gross Margin</span>
                   {renderValueWithDelta(
                     derived.gross_margin ?? null,
-                    previousSummary?.values?.gross_margin?.value ?? null,
+                    prevSummaryValues?.gross_margin?.value ?? null,
                     formatPercent
                   )}
                 </li>
@@ -402,7 +417,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>Operating Margin</span>
                   {renderValueWithDelta(
                     derived.operating_margin ?? null,
-                    previousSummary?.values?.operating_margin?.value ?? null,
+                    prevSummaryValues?.operating_margin?.value ?? null,
                     formatPercent
                   )}
                 </li>
@@ -410,7 +425,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>Net Margin</span>
                   {renderValueWithDelta(
                     derived.net_margin ?? null,
-                    previousSummary?.values?.net_margin?.value ?? null,
+                    prevSummaryValues?.net_margin?.value ?? null,
                     formatPercent
                   )}
                 </li>
@@ -418,7 +433,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>FCF Margin</span>
                   {renderValueWithDelta(
                     derived.fcf_margin ?? null,
-                    previousSummary?.values?.fcf_margin?.value ?? null,
+                    prevSummaryValues?.fcf_margin?.value ?? null,
                     formatPercent
                   )}
                 </li>
@@ -426,7 +441,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>Debt / Equity</span>
                   {renderValueWithDelta(
                     derived.debt_to_equity ?? null,
-                    previousSummary?.values?.debt_to_equity?.value ?? null,
+                    prevSummaryValues?.debt_to_equity?.value ?? null,
                     (v) => v.toFixed(2)
                   )}
                 </li>
@@ -434,7 +449,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>Liabilities / Assets</span>
                   {renderValueWithDelta(
                     derived.liabilities_to_assets ?? null,
-                    previousSummary?.values?.liabilities_to_assets?.value ?? null,
+                    prevSummaryValues?.liabilities_to_assets?.value ?? null,
                     (v) => v.toFixed(2)
                   )}
                 </li>
@@ -442,7 +457,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <span>EPS (Diluted)</span>
                   {renderValueWithDelta(
                     derived.eps_diluted ?? null,
-                    previousSummary?.values?.eps_diluted?.value ?? null,
+                    prevSummaryValues?.eps_diluted?.value ?? null,
                     formatCurrency
                   )}
                 </li>
@@ -492,14 +507,16 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <ul className="kv">
                     {Object.entries(latestForecast.values).map(([key, val]) => {
                       const label = humanLabel(key);
+                      const prevVal =
+                        currentSummary?.values?.[key]?.value ??
+                        previousSummary?.values?.[key]?.value ??
+                        null;
+                      const formatter = (v: number) =>
+                        `${key.includes("margin") ? formatPercent(v) : formatCurrency(v)} ${formatUnit(val.unit)}`;
                       return (
                         <li key={key}>
                           <span>{label}</span>
-                          {renderValueWithDelta(
-                            val.value,
-                            null,
-                            (v) => `${key.includes("margin") ? formatPercent(v) : formatCurrency(v)} ${formatUnit(val.unit)}`
-                          )}
+                          {renderValueWithDelta(val.value, prevVal, formatter)}
                         </li>
                       );
                     })}
@@ -528,7 +545,11 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                 {Object.entries(drivers).map(([key, val]) => (
                   <li key={key}>
                     <strong>{humanLabel(key)}</strong>:{" "}
-                    {renderValueWithDelta(val.value, null, (v) => formatDriverValue(key, v))}
+                    {renderValueWithDelta(
+                      val.value,
+                      previousSummary?.values?.[key]?.value ?? null,
+                      (v) => formatDriverValue(key, v)
+                    )}
                     {val.sources && val.sources.length > 0 && (
                       <div className="muted">
                         Sources:{" "}
