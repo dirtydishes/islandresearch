@@ -28,6 +28,7 @@ STATEMENT_DISPLAY_ORDER = {
     "balance_sheet": [
         "cash",
         "short_term_investments",
+        "long_term_investments",
         "accounts_receivable",
         "inventory",
         "prepaid_expenses",

@@ -1,8 +1,20 @@
 import unittest
 from datetime import date
+from pathlib import Path
 
 from workers.canonical import aggregate_canonical_rows
 from workers.parser import parse_inline_xbrl
+
+
+def _resolve_fixture_path(relative_path: str) -> Path:
+    path = Path(relative_path)
+    if path.is_file():
+        return path
+    if relative_path.startswith("storage/"):
+        alt = Path("/storage") / Path(relative_path).relative_to("storage")
+        if alt.is_file():
+            return alt
+    return path
 
 
 class AggregateCanonicalRowsTests(unittest.TestCase):
@@ -313,9 +325,7 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
 
 class CanonicalFromRealFilingTests(unittest.TestCase):
     def test_aggregates_real_filing_facts(self) -> None:
-        from pathlib import Path
-
-        html_path = Path("storage/raw/0001045810/000104581025000230_primary.html")
+        html_path = _resolve_fixture_path("storage/raw/0001045810/000104581025000230_primary.html")
         self.assertTrue(html_path.is_file(), "Real filing fixture missing")
         facts = parse_inline_xbrl(html_path.read_bytes())
         rows = []
@@ -352,9 +362,7 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
         self.assertAlmostEqual(latest_assets["value"], 161148000000.0)
 
     def test_aggregates_second_filing(self) -> None:
-        from pathlib import Path
-
-        html_path = Path("storage/raw/0001018724/000101872425000123_primary.html")
+        html_path = _resolve_fixture_path("storage/raw/0001018724/000101872425000123_primary.html")
         self.assertTrue(html_path.is_file(), "Real filing fixture missing")
         facts = parse_inline_xbrl(html_path.read_bytes())
         rows = []
@@ -386,9 +394,7 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
         self.assertAlmostEqual(latest_assets["value"], 727921000000.0)
 
     def test_aggregates_third_filing(self) -> None:
-        from pathlib import Path
-
-        html_path = Path("storage/raw/0000320193/000032019325000079_primary.html")
+        html_path = _resolve_fixture_path("storage/raw/0000320193/000032019325000079_primary.html")
         self.assertTrue(html_path.is_file(), "Real filing fixture missing")
         facts = parse_inline_xbrl(html_path.read_bytes())
         rows = []
@@ -417,6 +423,48 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
         cfo_rows = [r for r in aggregated if r["line_item"] == "cfo"]
         self.assertTrue(any(r["value"] for r in shares_rows))
         self.assertTrue(any(r["value"] is not None for r in cfo_rows))
+
+    def test_real_filings_include_core_line_items(self) -> None:
+        fixtures = [
+            ("AAPL", "0000320193", _resolve_fixture_path("storage/raw/0000320193/000032019325000079_primary.html")),
+            ("NVDA", "0001045810", _resolve_fixture_path("storage/raw/0001045810/000104581025000230_primary.html")),
+            ("AMZN", "0001018724", _resolve_fixture_path("storage/raw/0001018724/000101872425000123_primary.html")),
+        ]
+        required_by_statement = {
+            "income_statement": {"revenue", "net_income"},
+            "balance_sheet": {"assets", "equity"},
+            "cash_flow": {"cfo"},
+        }
+
+        for ticker, cik, html_path in fixtures:
+            self.assertTrue(html_path.is_file(), "Real filing fixture missing")
+            facts = parse_inline_xbrl(html_path.read_bytes())
+            rows = []
+            for i, fact in enumerate(facts, start=1):
+                rows.append(
+                    {
+                        "id": i,
+                        "ticker": ticker,
+                        "cik": cik,
+                        "accession": "acc-real",
+                        "period_end": fact.get("period_end"),
+                        "period_type": fact.get("period_type"),
+                        "statement": fact.get("statement"),
+                        "line_item": fact.get("line_item"),
+                        "value": fact.get("value"),
+                        "unit": fact.get("unit"),
+                    }
+                )
+            aggregated = aggregate_canonical_rows(rows)
+            by_statement = {}
+            for row in aggregated:
+                statement = row.get("statement")
+                line_item = row.get("line_item")
+                if statement and line_item:
+                    by_statement.setdefault(statement, set()).add(line_item)
+            for statement, required in required_by_statement.items():
+                missing = required - by_statement.get(statement, set())
+                self.assertFalse(missing, f"{ticker} missing {sorted(missing)} in {statement}")
 
 
 if __name__ == "__main__":
