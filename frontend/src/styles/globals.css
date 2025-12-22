@@ -203,6 +203,63 @@ body {
   margin-top: 10px;
 }
 
+.missing-panel {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.missing-panel summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: #c8cdd7;
+  font-size: 13px;
+}
+
+.missing-panel summary::-webkit-details-marker {
+  color: #9ba3b1;
+}
+
+.missing-hint {
+  margin: 6px 0 8px;
+  font-size: 12px;
+}
+
+.missing-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.missing-block {
+  display: grid;
+  gap: 6px;
+}
+
+.missing-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ba3b1;
+}
+
+.missing-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.missing-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(241, 196, 15, 0.12);
+  color: #f7e9a3;
+  font-size: 11px;
+}
+
 .period-hint {
   font-size: 12px;
 }

@@ -106,6 +106,210 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
         self.assertEqual(len(aggregated), 1)
         self.assertEqual(aggregated[0]["line_item"], "revenue")
 
+    def test_prefers_shorter_duration_for_income_statement(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2023, 1, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "revenue",
+                "value": 300,
+                "unit": "usd",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2023, 4, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "revenue",
+                "value": 120,
+                "unit": "usd",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        self.assertEqual(len(aggregated), 1)
+        self.assertEqual(aggregated[0]["value"], 120.0)
+        self.assertEqual(aggregated[0]["period_start"], date(2023, 4, 1))
+
+    def test_adds_balance_sheet_residuals(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_end": date(2024, 3, 31),
+                "period_type": "instant",
+                "statement": "balance_sheet",
+                "line_item": "assets_current",
+                "value": 100,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_end": date(2024, 3, 31),
+                "period_type": "instant",
+                "statement": "balance_sheet",
+                "line_item": "cash",
+                "value": 40,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _add_balance_sheet_residuals
+
+        enriched = _add_balance_sheet_residuals(aggregated)
+        residuals = [r for r in enriched if r.get("line_item") == "other_assets_current"]
+        self.assertEqual(len(residuals), 1)
+        self.assertAlmostEqual(residuals[0]["value"], 60.0)
+
+    def test_adds_income_and_cash_flow_derivations(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "revenue",
+                "value": 100.0,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "gross_profit",
+                "value": 60.0,
+                "unit": "USD",
+            },
+            {
+                "id": 3,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "operating_expenses",
+                "value": 30.0,
+                "unit": "USD",
+            },
+            {
+                "id": 4,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "operating_income",
+                "value": 20.0,
+                "unit": "USD",
+            },
+            {
+                "id": 5,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "depreciation_amortization",
+                "value": 5.0,
+                "unit": "USD",
+            },
+            {
+                "id": 6,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 50.0,
+                "unit": "USD",
+            },
+            {
+                "id": 7,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfi",
+                "value": -10.0,
+                "unit": "USD",
+            },
+            {
+                "id": 8,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cff",
+                "value": -5.0,
+                "unit": "USD",
+            },
+            {
+                "id": 9,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "fx_on_cash",
+                "value": 2.0,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _add_income_statement_derivations, _add_cash_flow_residuals
+
+        enriched = _add_income_statement_derivations(aggregated)
+        enriched = _add_cash_flow_residuals(enriched)
+
+        def _get(statement: str, line_item: str) -> float:
+            row = next(r for r in enriched if r.get("statement") == statement and r.get("line_item") == line_item)
+            return float(row.get("value"))
+
+        self.assertAlmostEqual(_get("income_statement", "cogs"), 40.0)
+        self.assertAlmostEqual(_get("income_statement", "total_expenses"), 70.0)
+        self.assertAlmostEqual(_get("income_statement", "ebitda"), 25.0)
+        self.assertAlmostEqual(_get("cash_flow", "change_in_cash"), 37.0)
+
 
 class CanonicalFromRealFilingTests(unittest.TestCase):
     def test_aggregates_real_filing_facts(self) -> None:

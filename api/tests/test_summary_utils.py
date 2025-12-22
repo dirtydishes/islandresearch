@@ -13,6 +13,7 @@ from summary_utils import (
     compute_backtest_metrics,
     compute_revenue_backtest,
     compute_tie_checks,
+    compute_coverage,
 )
 
 
@@ -154,6 +155,53 @@ class SummaryUtilsTests(unittest.TestCase):
         self.assertAlmostEqual(latest["cf_sum"], 25.0)
         self.assertAlmostEqual(latest["cash_delta"], 25.0)
         self.assertAlmostEqual(latest["cf_tie"], 0.0)
+
+    def test_compute_coverage_uses_applicable_items(self) -> None:
+        metrics = {
+            "2024-12-31": {
+                "period_end": "2024-12-31",
+                "values": {
+                    "revenue": {"value": 100.0, "unit": "USD"},
+                    "cogs": {"value": 60.0, "unit": "USD"},
+                },
+            }
+        }
+        applicable = {
+            "2024-12-31": {
+                "income_statement": {"revenue", "cogs", "net_income"},
+                "balance_sheet": set(),
+                "cash_flow": set(),
+            }
+        }
+        coverage = compute_coverage(metrics, applicable)
+        income = coverage["2024-12-31"]["by_statement"]["income_statement"]
+        self.assertEqual(income["expected"], 3)
+        self.assertEqual(income["found"], 2)
+        missing = coverage["2024-12-31"]["missing"]["income_statement"]
+        self.assertIn("net_income", missing)
+
+    def test_compute_coverage_counts_multi_statement_items(self) -> None:
+        metrics = {
+            "2024-12-31": {
+                "period_end": "2024-12-31",
+                "values": {
+                    "net_income": {"value": 50.0, "unit": "USD"},
+                },
+            }
+        }
+        applicable = {
+            "2024-12-31": {
+                "income_statement": {"net_income"},
+                "balance_sheet": set(),
+                "cash_flow": {"net_income"},
+            }
+        }
+        coverage = compute_coverage(metrics, applicable)
+        income = coverage["2024-12-31"]["by_statement"]["income_statement"]
+        cash_flow = coverage["2024-12-31"]["by_statement"]["cash_flow"]
+        self.assertEqual(income["found"], 1)
+        self.assertEqual(cash_flow["found"], 1)
+        self.assertNotIn("net_income", coverage["2024-12-31"]["missing"]["cash_flow"])
 
 
 if __name__ == "__main__":

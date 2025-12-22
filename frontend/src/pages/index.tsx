@@ -61,6 +61,7 @@ type SummaryResponse = {
       total_found: number;
       total_expected: number;
       by_statement: Record<string, { found: number; expected: number }>;
+      missing?: Record<string, string[]>;
     }
   >;
   ties?: Record<string, { period_end: string; bs_tie: number | null; cf_sum: number | null; cash_delta: number | null; cf_tie: number | null }>;
@@ -312,6 +313,11 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const currentSummary = summary?.periods?.find((p) => p.period_end === (selectedPeriod ?? statements[0]?.period_end));
   const currentSummarySources = currentSummary?.sources || {};
   const currentCoverage = currentPeriodKey ? summary?.coverage?.[currentPeriodKey] : null;
+  const currentMissing = currentCoverage?.missing ?? null;
+  const missingTotal = currentMissing
+    ? Object.values(currentMissing).reduce((sum, items) => sum + (items?.length ?? 0), 0)
+    : 0;
+  const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
   const currentTies = currentPeriodKey ? summary?.ties?.[currentPeriodKey] : null;
   const prevSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
 
@@ -633,6 +639,37 @@ export default function Home({ ticker, statements, summary, error }: Props) {
               BS {currentCoverage.by_statement?.balance_sheet?.found ?? 0}/{currentCoverage.by_statement?.balance_sheet?.expected ?? 0},{" "}
               CF {currentCoverage.by_statement?.cash_flow?.found ?? 0}/{currentCoverage.by_statement?.cash_flow?.expected ?? 0}
             </p>
+          )}
+          {currentCoverage?.missing && (
+            <details className="missing-panel">
+              <summary>
+                <span>Missing items</span>
+                <span className={`pill ${missingTotal ? "warn" : "success"}`}>{missingTotal}</span>
+              </summary>
+              <p className="muted missing-hint">Based on mapped line items in this filing.</p>
+              {missingTotal === 0 ? (
+                <p className="muted">All applicable line items present.</p>
+              ) : (
+                <div className="missing-grid">
+                  {missingOrder.map((stmt) => {
+                    const items = currentMissing?.[stmt] ?? [];
+                    if (!items.length) return null;
+                    return (
+                      <div key={stmt} className="missing-block">
+                        <span className="missing-label">{humanLabel(stmt)}</span>
+                        <div className="missing-items">
+                          {items.map((item) => (
+                            <span key={item} className="missing-pill">
+                              {humanLabel(item)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </details>
           )}
           {currentTies && (
             <div className="muted tie-row">

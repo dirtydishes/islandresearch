@@ -12,6 +12,12 @@ from .tag_map import TAG_MAP
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_CONTEXT_AXES = {
+    "us-gaap:StatementClassOfStockAxis",
+    "us-gaap:StatementEquityComponentsAxis",
+    "dei:LegalEntityAxis",
+}
+
 
 def _parse_amount(text: str) -> Optional[float]:
     cleaned = text.replace(",", "").replace("$", "").strip()
@@ -98,8 +104,7 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         segment = ctx.find(lambda t: t.name and t.name.lower().endswith("segment"))
         if segment:
             dims = {m.get("dimension") for m in segment.find_all(lambda t: t.name and t.name.lower().endswith("explicitmember"))}
-            allowed_dims = {"us-gaap:StatementClassOfStockAxis", "dei:LegalEntityAxis"}
-            if not dims.issubset(allowed_dims):
+            if any(dim not in ALLOWED_CONTEXT_AXES for dim in dims):
                 continue
         period = ctx.find(lambda t: t.name and t.name.lower().endswith("period"))
         if not period:

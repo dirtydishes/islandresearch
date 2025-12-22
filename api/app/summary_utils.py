@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 import datetime
 
 # Allowed statements and line items mirrored from workers/tag_map.py
@@ -32,7 +32,9 @@ ALLOWED_LINE_ITEMS = {
         "accounts_receivable",
         "inventory",
         "prepaid_expenses",
+        "other_assets_current",
         "assets_current",
+        "other_assets_noncurrent",
         "assets_noncurrent",
         "assets",
         "ppe",
@@ -42,7 +44,9 @@ ALLOWED_LINE_ITEMS = {
         "accrued_expenses",
         "deferred_revenue_current",
         "deferred_revenue_noncurrent",
+        "other_liabilities_current",
         "liabilities_current",
+        "other_liabilities_noncurrent",
         "liabilities_noncurrent",
         "liabilities",
         "debt_current",
@@ -72,6 +76,10 @@ ALLOWED_LINE_ITEMS = {
         "change_in_restricted_cash",
     },
 }
+LINE_ITEM_TO_STATEMENTS: Dict[str, Set[str]] = {}
+for statement, items in ALLOWED_LINE_ITEMS.items():
+    for line_item in items:
+        LINE_ITEM_TO_STATEMENTS.setdefault(line_item, set()).add(statement)
 
 
 def filter_allowed(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Dict[str, Dict[str, Dict[str, Optional[float]]]]:
@@ -310,20 +318,34 @@ def compute_revenue_backtest(metrics: Dict[str, Dict[str, Dict[str, Optional[flo
     return scored
 
 
-def compute_coverage(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) -> Dict[str, Dict]:
+def compute_coverage(
+    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
+    applicable_by_period: Optional[Dict[str, Dict[str, Set[str]]]] = None,
+) -> Dict[str, Dict]:
     """
     Compute coverage per period: expected vs found counts by statement and overall.
+    Also returns missing line items per statement for quick debugging.
     """
     coverage: Dict[str, Dict] = {}
     for period, payload in metrics.items():
-        expected_by_stmt = {stmt: len(items) for stmt, items in ALLOWED_LINE_ITEMS.items()}
-        found_by_stmt = {stmt: 0 for stmt in ALLOWED_STATEMENTS}
+        if applicable_by_period and period in applicable_by_period:
+            expected_items = {
+                stmt: set(applicable_by_period[period].get(stmt, set())) for stmt in ALLOWED_STATEMENTS
+            }
+        else:
+            expected_items = {stmt: set(items) for stmt, items in ALLOWED_LINE_ITEMS.items()}
+        found_items = {stmt: set() for stmt in ALLOWED_STATEMENTS}
         values = payload.get("values", {})
         for line_item in values.keys():
-            for stmt, items in ALLOWED_LINE_ITEMS.items():
-                if line_item in items:
-                    found_by_stmt[stmt] += 1
-                    break
+            statements = LINE_ITEM_TO_STATEMENTS.get(line_item)
+            if not statements:
+                continue
+            for stmt in statements:
+                found_items[stmt].add(line_item)
+                expected_items[stmt].add(line_item)
+        found_by_stmt = {stmt: len(items) for stmt, items in found_items.items()}
+        expected_by_stmt = {stmt: len(items) for stmt, items in expected_items.items()}
+        missing_by_stmt = {stmt: sorted(expected_items[stmt] - found_items[stmt]) for stmt in expected_items.keys()}
         coverage[period] = {
             "period_end": payload.get("period_end", period),
             "total_found": sum(found_by_stmt.values()),
@@ -331,6 +353,7 @@ def compute_coverage(metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]]) 
             "by_statement": {
                 stmt: {"found": found_by_stmt[stmt], "expected": expected_by_stmt[stmt]} for stmt in sorted(ALLOWED_STATEMENTS)
             },
+            "missing": {stmt: missing_by_stmt.get(stmt, []) for stmt in sorted(ALLOWED_STATEMENTS)},
         }
     return coverage
 
