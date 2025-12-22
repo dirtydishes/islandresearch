@@ -50,7 +50,7 @@ def get_summary(ticker: str) -> Dict[str, Any]:
                 FROM filings
                 WHERE ticker = %s
                 ORDER BY filed_at DESC NULLS LAST, created_at DESC
-                LIMIT 5;
+                LIMIT 20;
                 """,
                 (t,),
             )
@@ -97,15 +97,15 @@ def get_summary(ticker: str) -> Dict[str, Any]:
     shares_diluted = _get_latest_metric("shares_diluted")
 
     derived = {
-        "gross_margin": (gross_profit / revenue) if revenue and revenue != 0 else None,
-        "operating_margin": (operating_income / revenue) if revenue and revenue != 0 else None,
-        "net_margin": (net_income / revenue) if revenue and revenue != 0 else None,
+        "gross_margin": (gross_profit / revenue) if (revenue not in (None, 0) and gross_profit is not None) else None,
+        "operating_margin": (operating_income / revenue) if (revenue not in (None, 0) and operating_income is not None) else None,
+        "net_margin": (net_income / revenue) if (revenue not in (None, 0) and net_income is not None) else None,
         "fcf": (cfo or 0) + (cfi or 0) if (cfo is not None or cfi is not None) else None,
-        "fcf_margin": ((cfo or 0) + (cfi or 0)) / revenue if revenue and revenue != 0 and (cfo is not None or cfi is not None) else None,
-        "debt_to_equity": (debt / equity) if equity and equity != 0 else None,
-        "liabilities_to_assets": (liabilities / assets) if liabilities is not None and assets else None,
-        "eps_basic": (net_income / shares_basic) if net_income is not None and shares_basic else None,
-        "eps_diluted": (net_income / shares_diluted) if net_income is not None and shares_diluted else None,
+        "fcf_margin": ((cfo or 0) + (cfi or 0)) / revenue if (revenue not in (None, 0) and (cfo is not None or cfi is not None)) else None,
+        "debt_to_equity": (debt / equity) if (equity not in (None, 0) and debt is not None) else None,
+        "liabilities_to_assets": (liabilities / assets) if (liabilities is not None and assets not in (None, 0)) else None,
+        "eps_basic": (net_income / shares_basic) if (net_income is not None and shares_basic not in (None, 0)) else None,
+        "eps_diluted": (net_income / shares_diluted) if (net_income is not None and shares_diluted not in (None, 0)) else None,
     }
 
     # Filter metrics to canonical schema and compute driver-based forecast.

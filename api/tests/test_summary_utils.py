@@ -6,8 +6,14 @@ sys.path.append(str(Path(__file__).resolve().parents[1] / "app"))
 
 import unittest
 
-from summary_utils import build_forecast, compute_drivers, filter_allowed
-from summary_utils import compute_backtest_metrics, compute_revenue_backtest
+from summary_utils import (
+    build_forecast,
+    compute_drivers,
+    filter_allowed,
+    compute_backtest_metrics,
+    compute_revenue_backtest,
+    compute_tie_checks,
+)
 
 
 class SummaryUtilsTests(unittest.TestCase):
@@ -120,6 +126,34 @@ class SummaryUtilsTests(unittest.TestCase):
         assert backtest is not None
         self.assertEqual(backtest["samples"], 2)
         self.assertTrue(backtest["mae"] >= 0)
+
+    def test_tie_checks_quarterizes_ytd_cash_flows(self) -> None:
+        metrics = {
+            "2024-07-27": {
+                "values": {
+                    "cfo": {"value": 100.0, "unit": "USD", "start": "2024-01-29"},
+                    "cfi": {"value": -30.0, "unit": "USD", "start": "2024-01-29"},
+                    "cff": {"value": -10.0, "unit": "USD", "start": "2024-01-29"},
+                    "cash": {"value": 140.0, "unit": "USD"},
+                    "change_in_cash": {"value": 25.0, "unit": "USD"},
+                }
+            },
+            "2024-04-27": {
+                "values": {
+                    "cfo": {"value": 60.0, "unit": "USD", "start": "2024-01-29"},
+                    "cfi": {"value": -20.0, "unit": "USD", "start": "2024-01-29"},
+                    "cff": {"value": -5.0, "unit": "USD", "start": "2024-01-29"},
+                    "cash": {"value": 100.0, "unit": "USD"},
+                    "change_in_cash": {"value": 10.0, "unit": "USD"},
+                }
+            },
+        }
+        ties = compute_tie_checks(metrics)
+        latest = ties["2024-07-27"]
+        # Quarterized values: (100-60)=40, (-30 - -20)=-10, (-10 - -5)=-5, sum=25, change_in_cash=25 => cf_tie=0
+        self.assertAlmostEqual(latest["cf_sum"], 25.0)
+        self.assertAlmostEqual(latest["cash_delta"], 25.0)
+        self.assertAlmostEqual(latest["cf_tie"], 0.0)
 
 
 if __name__ == "__main__":

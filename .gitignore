@@ -1,0 +1,11 @@
+.next/
+__pycache__/
+*.pyc
+
+# Local data/artifacts
+api/app/data/
+api/tests/__pycache__/
+frontend/.next/cache/
+storage/raw/
+workers/data/
+workers/jobs/__pycache__/

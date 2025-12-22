@@ -54,6 +54,7 @@ def ensure_schema() -> None:
         ticker TEXT NOT NULL,
         cik TEXT NOT NULL,
         accession TEXT NOT NULL,
+        period_start DATE,
         period_end DATE,
         period_type TEXT,
         statement TEXT,
@@ -67,6 +68,8 @@ def ensure_schema() -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(ddl)
+            cur.execute("ALTER TABLE facts ADD COLUMN IF NOT EXISTS period_start DATE;")
+            cur.execute("ALTER TABLE canonical_facts ADD COLUMN IF NOT EXISTS period_start DATE;")
         conn.commit()
 
 

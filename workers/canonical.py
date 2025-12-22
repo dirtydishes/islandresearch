@@ -160,7 +160,6 @@ def log_tie_checks(aggregated: List[Dict[str, Any]]) -> None:
     violations: List[str] = []
     for period, stmts in by_period.items():
         bs = stmts.get("balance_sheet", {})
-        cf = stmts.get("cash_flow", {})
         assets = bs.get("assets")
         liabilities = bs.get("liabilities")
         equity = bs.get("equity")
@@ -168,16 +167,6 @@ def log_tie_checks(aggregated: List[Dict[str, Any]]) -> None:
             delta = assets - (liabilities + equity)
             if abs(delta) > TIE_TOLERANCE:
                 msg = f"Balance sheet tie off for {period}: {delta}"
-                logger.warning(msg)
-                violations.append(msg)
-        cfo = cf.get("cfo")
-        cfi = cf.get("cfi")
-        cff = cf.get("cff")
-        if cfo is not None and cfi is not None and cff is not None:
-            cf_sum = cfo + cfi + cff
-            # cash delta check occurs in summary; here we only log sum magnitude.
-            if abs(cf_sum) > TIE_TOLERANCE:
-                msg = f"Cash flow sum off for {period}: {cf_sum}"
                 logger.warning(msg)
                 violations.append(msg)
     if HARD_FAIL_TIES and violations:
@@ -196,7 +185,7 @@ def _infer_default_period_end(cur, ticker: str) -> Optional[Any]:
           LIMIT 1
         ),
         inferred_period AS (
-          SELECT COALESCE(MAX(period_end), MAX(filed_at)) AS period_end
+          SELECT MAX(filed_at) AS period_end
           FROM filings f
           JOIN latest l ON f.accession = l.accession
           WHERE f.ticker = %s
@@ -208,6 +197,8 @@ def _infer_default_period_end(cur, ticker: str) -> Optional[Any]:
     row = cur.fetchone()
     if not row:
         return None
+    if isinstance(row, dict):
+        return row.get("period_end")
     return row[0]
 
 
@@ -245,14 +236,15 @@ def materialize_canonical_for_ticker(ticker: str) -> int:
 
             if aggregated:
                 insert_sql = """
-                INSERT INTO canonical_facts (ticker, cik, accession, period_end, period_type, statement, line_item, value, unit, source_fact_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO canonical_facts (ticker, cik, accession, period_start, period_end, period_type, statement, line_item, value, unit, source_fact_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 params = [
                     (
                         row["ticker"],
                         row.get("cik"),
                         row.get("accession"),
+                        row.get("period_start"),
                         row.get("period_end"),
                         row.get("period_type"),
                         row.get("statement"),
