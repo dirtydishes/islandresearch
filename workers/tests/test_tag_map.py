@@ -21,6 +21,8 @@ class TagMapTests(unittest.TestCase):
             "us-gaap:MarketableSecuritiesNoncurrent",
             "us-gaap:PaymentsToAcquireBusinessesAndIntangibles",
             "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
+            "us-gaap:DividendsCommonStockCash",
+            "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
         ]
         for tag in expected:
             self.assertIn(tag, TAG_MAP)

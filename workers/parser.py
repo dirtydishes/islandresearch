@@ -17,6 +17,11 @@ ALLOWED_CONTEXT_AXES = {
     "us-gaap:StatementEquityComponentsAxis",
     "dei:LegalEntityAxis",
 }
+ANCHOR_LINE_ITEMS = {
+    "income_statement": {"revenue", "net_income", "gross_profit", "operating_income"},
+    "balance_sheet": {"assets", "equity", "liabilities_equity", "cash"},
+    "cash_flow": {"cfo", "cfi", "cff", "net_income"},
+}
 
 
 def _parse_amount(text: str) -> Optional[float]:
@@ -126,6 +131,20 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
             fallback_period_end = end or fallback_period_end
             fallback_period_type = "duration" if end else fallback_period_type
 
+    anchor_contexts = {stmt: set() for stmt in ANCHOR_LINE_ITEMS.keys()}
+    for tag in soup.find_all():
+        name = tag.get("name")
+        if not name or name not in TAG_MAP:
+            continue
+        mapping_entry = TAG_MAP[name]
+        mappings = mapping_entry if isinstance(mapping_entry, list) else [mapping_entry]
+        ctx_ref = tag.get("contextref")
+        if ctx_ref and ctx_ref not in contexts:
+            continue
+        for line_item, statement in mappings:
+            if line_item in ANCHOR_LINE_ITEMS.get(statement, set()) and ctx_ref:
+                anchor_contexts[statement].add(ctx_ref)
+
     facts: List[Dict[str, Optional[str]]] = []
     for tag in soup.find_all():
         name = tag.get("name")
@@ -146,6 +165,10 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         period_type = ctx_data.get("period_type") or fallback_period_type or "unknown"
         unit = _normalize_unit(tag.get("unitref") or tag.get("unit") or "USD")
         for line_item, statement in mappings:
+            anchors = anchor_contexts.get(statement, set())
+            if anchors and line_item not in ANCHOR_LINE_ITEMS.get(statement, set()):
+                if not ctx_ref or ctx_ref not in anchors:
+                    continue
             facts.append(
                 {
                     "line_item": line_item,
