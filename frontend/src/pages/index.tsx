@@ -6,6 +6,10 @@ type StatementLine = {
   line_item: string | null;
   value: number | null;
   unit: string | null;
+  source_accession?: string | null;
+  source_path?: string | null;
+  source_form?: string | null;
+  source_filed_at?: string | null;
 };
 
 type StatementPeriod = {
@@ -141,6 +145,30 @@ function formatUnit(unit: string | null | undefined) {
   if (upper === "USDPERSHARE") return "(per share)";
   if (upper === "SHARES") return "(shares)";
   return `(${unit})`;
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "n/a";
+  return value.split("T")[0];
+}
+
+function formatForm(value: string | null | undefined) {
+  if (!value) return "Filing";
+  return value.toUpperCase();
+}
+
+function periodLabelForForm(form: string | null | undefined) {
+  if (!form) return "Period end";
+  const upper = form.toUpperCase();
+  if (upper.startsWith("10-K")) return "FY";
+  if (upper.startsWith("10-Q")) return "Q";
+  return "Period end";
+}
+
+function buildSourceLabel(ticker: string, form: string | null | undefined, periodEnd: string | null | undefined) {
+  const label = periodLabelForForm(form);
+  const period = periodEnd ? formatDate(periodEnd) : "n/a";
+  return `${ticker} ${formatForm(form)} (${label} ${period})`;
 }
 
 function formatDriverValue(key: string, value: number | null | undefined) {
@@ -588,7 +616,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
             <span className="pill">Canonical</span>
           </div>
           <div className="period-selector">
-            <label htmlFor="period">Period</label>
+            <label htmlFor="period">Period end</label>
             <select id="period" value={selectedPeriod ?? ""} onChange={handlePeriodChange}>
               {periodOptions.map((p) => (
                 <option key={p} value={p}>
@@ -596,6 +624,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                 </option>
               ))}
             </select>
+            <span className="muted period-hint">Fiscal period end date.</span>
           </div>
           {currentCoverage && (
             <p className="muted">
@@ -647,27 +676,62 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                   <ul>
                     {items.map((item) => {
                       const driverSources = summary?.drivers?.[item.line_item ?? ""]?.sources;
-                      const source = currentSummarySources[item.line_item ?? ""];
-                      const sourceLink = source?.path ? buildSourceUrl(source.path) : null;
+                      const summarySource = currentSummarySources[item.line_item ?? ""];
+                      const sourcePath = item.source_path || summarySource?.path;
+                      const filingFallback = item.source_accession
+                        ? summary?.filings?.find((f) => f.accession === item.source_accession)
+                        : null;
+                      const sourceForm = item.source_form || filingFallback?.form || null;
+                      const sourceFiledAt = item.source_filed_at || filingFallback?.filed_at || null;
+                      const sourceAccession = item.source_accession || null;
+                      const sourceLink = sourcePath ? buildSourceUrl(sourcePath) : null;
+                      const sourceLabel = `Source: ${buildSourceLabel(
+                        ticker,
+                        sourceForm,
+                        currentPeriodKey || summarySource?.period_end || null
+                      )}`;
+                      const sourceUnit = item.unit || summarySource?.unit;
+                      const showSource = Boolean(sourcePath || sourceAccession || summarySource);
+                      const sourceTooltip = [
+                        `Ticker: ${ticker}`,
+                        `Form: ${sourceForm ? formatForm(sourceForm) : "n/a"}`,
+                        `Filed: ${sourceFiledAt ? formatDate(sourceFiledAt) : "n/a"}`,
+                        `Accession: ${sourceAccession || "n/a"}`,
+                        `Statement: ${humanLabel(summarySource?.statement || stmt)}`,
+                        `Line item: ${humanLabel(item.line_item)}`,
+                        `Period end: ${currentPeriodKey || "n/a"}`,
+                        `Unit: ${sourceUnit || "n/a"}`,
+                        sourcePath ? `Path: ${sourcePath}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" • ");
+                      const sourcePill = sourceLink ? (
+                        <a
+                          className="pill source-pill"
+                          data-tooltip={sourceTooltip}
+                          aria-label={sourceTooltip}
+                          href={sourceLink}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {sourceLabel} {formatUnit(sourceUnit)}
+                        </a>
+                      ) : (
+                        <span className="pill source-pill" data-tooltip={sourceTooltip} aria-label={sourceTooltip}>
+                          {sourceLabel} {formatUnit(sourceUnit)}
+                        </span>
+                      );
                       return (
                         <li key={`${stmt}-${item.line_item}`}>
-                          <span>{humanLabel(item.line_item)}</span>
-                          {source && (
-                            <em className="muted">
-                              Source: {humanLabel(source.statement || source.line_item)} @ {source.period_end || "n/a"}{" "}
-                              {formatUnit(source.unit)}{" "}
-                              {sourceLink && (
-                                <a className="link" href={sourceLink} target="_blank" rel="noreferrer">
-                                  View
-                                </a>
-                              )}
-                            </em>
-                          )}
-                          {driverSources && (
-                            <em className="muted">
-                              Drivers: {driverSources.map((s) => s.period_end || "n/a").join(", ")}
-                            </em>
-                          )}
+                          <div className="statement-meta">
+                            <span>{humanLabel(item.line_item)}</span>
+                            {showSource && sourcePill}
+                            {driverSources && (
+                              <span className="muted">
+                                Drivers: {driverSources.map((s) => s.period_end || "n/a").join(", ")}
+                              </span>
+                            )}
+                          </div>
                           {renderValueWithDelta(
                             item.value,
                             (() => {

@@ -76,10 +76,20 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT period_end, statement, line_item, value, unit
-                FROM canonical_facts
-                WHERE ticker = %s AND period_end IS NOT NULL
-                ORDER BY period_end DESC, statement, line_item
+                SELECT cf.period_end,
+                       cf.statement,
+                       cf.line_item,
+                       cf.value,
+                       cf.unit,
+                       cf.accession,
+                       fact.source_path,
+                       fil.form,
+                       fil.filed_at
+                FROM canonical_facts cf
+                LEFT JOIN facts fact ON fact.id = cf.source_fact_id
+                LEFT JOIN filings fil ON fil.accession = cf.accession
+                WHERE cf.ticker = %s AND cf.period_end IS NOT NULL
+                ORDER BY cf.period_end DESC, cf.statement, cf.line_item
                 """,
                 (ticker.upper(),),
             )
@@ -96,7 +106,15 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
         if not statement:
             continue
         period_map[key]["lines"].setdefault(statement, []).append(
-            {"line_item": row["line_item"], "value": float(row["value"]) if row["value"] is not None else None, "unit": row["unit"]}
+            {
+                "line_item": row["line_item"],
+                "value": float(row["value"]) if row["value"] is not None else None,
+                "unit": row["unit"],
+                "source_accession": row.get("accession"),
+                "source_path": row.get("source_path"),
+                "source_form": row.get("form"),
+                "source_filed_at": row.get("filed_at").isoformat() if row.get("filed_at") else None,
+            }
         )
     # Order line items for each statement using a stable display order.
     for period_data in period_map.values():

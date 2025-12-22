@@ -203,6 +203,10 @@ body {
   margin-top: 10px;
 }
 
+.period-hint {
+  font-size: 12px;
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -289,10 +293,29 @@ body {
 .statement-block li {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   color: #e8ecf5;
 }
+
+.statement-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.source-pill {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
 
 .value {
   font-weight: 700;

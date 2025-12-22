@@ -124,6 +124,10 @@ class StatementLine(BaseModel):
     line_item: str | None
     value: float | None
     unit: str | None
+    source_accession: str | None = None
+    source_path: str | None = None
+    source_form: str | None = None
+    source_filed_at: date | None = None
 
 
 class StatementPeriod(BaseModel):
