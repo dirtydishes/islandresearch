@@ -98,3 +98,19 @@ def upsert_filing(
                 (ticker.upper(), cik, accession, form, filed_at, path, submissions_path),
             )
         conn.commit()
+
+
+def list_filing_accessions(ticker: str) -> List[str]:
+    ensure_schema()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT accession
+                FROM filings
+                WHERE ticker = %s
+                """,
+                (ticker.upper(),),
+            )
+            rows = cur.fetchall()
+    return [row["accession"] for row in rows]

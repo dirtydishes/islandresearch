@@ -198,7 +198,7 @@ def supported_tickers() -> dict:
 
 
 @app.post("/ingest/{ticker}", response_model=EnqueueResponse, tags=["ingest"])
-def enqueue_ingest(ticker: str, limit: int = 12) -> EnqueueResponse:
+def enqueue_ingest(ticker: str, limit: int = 8) -> EnqueueResponse:
     """Queue a fetch job for a ticker. Worker must be running to process."""
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
@@ -302,8 +302,8 @@ def summary(ticker: str) -> SummaryResponse:
 
 
 @app.post("/trigger/{ticker}", response_model=TriggerResponse, tags=["ingest"])
-def trigger_ingest_pipeline(ticker: str, limit: int = 12) -> TriggerResponse:
-    """Trigger ingest -> parse -> canonical materialization for a ticker (default last 12 filings)."""
+def trigger_ingest_pipeline(ticker: str, limit: int = 8) -> TriggerResponse:
+    """Trigger ingest -> parse -> canonical materialization for a ticker (default last 8 filings)."""
     cik = get_cik_for_ticker(ticker)
     covered = get_coverage_status(ticker)
     if not cik:
@@ -335,6 +335,50 @@ def trigger_ingest_pipeline(ticker: str, limit: int = 12) -> TriggerResponse:
                 detail=f"Ingestion unavailable (queue down and workers module missing in API image): {exc}",
             )
         result = run_pipeline(ticker, limit=limit)
+        return TriggerResponse(
+            ticker=ticker.upper(),
+            covered=covered,
+            ingest_job_id=None,
+            parse_job_id=None,
+            canonical_job_id=None,
+            queue="inline",
+            dropped_facts=result.get("dropped_facts") if isinstance(result, dict) else None,
+        )
+
+
+@app.post("/backfill/{ticker}", response_model=TriggerResponse, tags=["ingest"])
+def trigger_backfill_pipeline(ticker: str, limit: int = 24) -> TriggerResponse:
+    """Trigger backfill ingest -> parse -> canonical materialization for older filings."""
+    cik = get_cik_for_ticker(ticker)
+    covered = get_coverage_status(ticker)
+    if not cik:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticker not found in SEC ticker list. Ensure company_tickers.json is present.",
+        )
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    try:
+        redis_conn = Redis.from_url(redis_url)
+        q = Queue(os.getenv("QUEUE_NAME", "ingest"), connection=redis_conn)
+        pipeline_job = q.enqueue("workers.jobs.backfill_ticker.backfill_ticker", ticker, limit=limit)
+        return TriggerResponse(
+            ticker=ticker.upper(),
+            covered=covered,
+            ingest_job_id=pipeline_job.id,
+            parse_job_id=pipeline_job.id,
+            canonical_job_id=pipeline_job.id,
+            queue=q.name,
+            dropped_facts=None,
+        )
+    except Exception:
+        try:
+            from workers.jobs.backfill_ticker import backfill_ticker  # type: ignore
+        except Exception as exc:  # pragma: no cover - runtime guard
+            raise HTTPException(
+                status_code=503,
+                detail=f"Backfill unavailable (queue down and workers module missing in API image): {exc}",
+            )
+        result = backfill_ticker(ticker, limit=limit)
         return TriggerResponse(
             ticker=ticker.upper(),
             covered=covered,
