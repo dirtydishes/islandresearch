@@ -51,8 +51,16 @@ type SummaryResponse = {
   resolvable?: boolean;
   cik?: string | null;
   derived?: Derived;
-  drivers?: Record<string, { value: number | null; sources?: { line_item?: string; period_end?: string; note?: string }[] }>;
-  forecast?: { period_end: string; values: Record<string, SummaryValue> }[];
+  drivers?: Record<
+    string,
+    {
+      value: number | null;
+      description?: string | null;
+      sources?: { line_item?: string; period_end?: string; note?: string }[];
+      is_default?: boolean;
+    }
+  >;
+  forecast?: { period_end: string; values: Record<string, SummaryValue>; scenario?: string | null; period_index?: number | null }[];
   dropped_facts?: number | null;
   coverage?: Record<
     string,
@@ -138,6 +146,20 @@ function formatPercent(value: number | null) {
   if (Number.isNaN(num)) return "—";
   const pct = Math.floor(num * 10000) / 100; // floor to 2 decimals
   return `${pct.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function toneForCoverage(value: number | null) {
+  if (value === null || value === undefined) return null;
+  if (value >= 0.9) return "success";
+  if (value >= 0.75) return "warn";
+  return "danger";
+}
+
+function toneForDirectionalAccuracy(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  if (value >= 0.6) return "success";
+  if (value >= 0.5) return "warn";
+  return "danger";
 }
 
 function formatUnit(unit: string | null | undefined) {
@@ -315,12 +337,42 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const currentSummarySources = currentSummary?.sources || {};
   const currentCoverage = currentPeriodKey ? summary?.coverage?.[currentPeriodKey] : null;
   const currentMissing = currentCoverage?.missing ?? null;
+  const coveragePct =
+    currentCoverage && currentCoverage.total_expected
+      ? currentCoverage.total_found / currentCoverage.total_expected
+      : null;
+  const coveragePercentLabel = coveragePct === null ? "—" : formatPercent(coveragePct);
+  const coverageTone = toneForCoverage(coveragePct);
+  const coverageToneClass = coverageTone ? ` ${coverageTone}` : "";
   const missingTotal = currentMissing
     ? Object.values(currentMissing).reduce((sum, items) => sum + (items?.length ?? 0), 0)
     : 0;
   const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
   const currentTies = currentPeriodKey ? summary?.ties?.[currentPeriodKey] : null;
   const prevSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
+  const timeTravel = summary?.backtest_time_travel || null;
+  const daTone = toneForDirectionalAccuracy(timeTravel?.directional_accuracy);
+  const daToneClass = daTone ? ` ${daTone}` : "";
+  const showQuality = Boolean(currentCoverage || currentTies || timeTravel);
+  const hasDrivers = Boolean(drivers && Object.keys(drivers).length > 0);
+  const driverPeriodCount = summary?.periods?.length ?? 0;
+  const driverWindow = driverPeriodCount ? Math.min(driverPeriodCount, 4) : 0;
+  const driverAsOf = summary?.periods?.[0]?.period_end ?? null;
+  const forecastPeriods = summary?.forecast ? new Set(summary.forecast.map((f) => f.period_end)) : null;
+  const forecastHorizon = forecastPeriods ? forecastPeriods.size : 0;
+  const driverForecastNote = forecastHorizon
+    ? `Used to project next ${forecastHorizon} period${forecastHorizon === 1 ? "" : "s"}`
+    : "Used as base-case inputs for forecasts";
+  const driverContext = [
+    "Derived from historical actuals (not predictions)",
+    driverAsOf ? `As of ${driverAsOf}` : null,
+    driverWindow
+      ? `Window: last ${driverWindow} period${driverWindow === 1 ? "" : "s"}`
+      : "Window: last up to 4 periods",
+    driverForecastNote,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" • ");
 
   const apiBaseClient = () => process.env.NEXT_PUBLIC_API_BASE || "/api";
   const buildSourceUrl = (path: string | null | undefined) => {
@@ -570,10 +622,11 @@ export default function Home({ ticker, statements, summary, error }: Props) {
             </div>
                   <div className="card">
                     <div className="card-header">
-                      <h2>Drivers & Provenance</h2>
-                      <span className="pill">Assumptions</span>
+                      <h2>Forecast Inputs</h2>
+                      <span className="pill">Historical</span>
                     </div>
-                    {!drivers || Object.keys(drivers).length === 0 ? (
+                    {hasDrivers && driverContext && <p className="muted">{driverContext}</p>}
+                    {!hasDrivers ? (
                       <p className="muted">No drivers available.</p>
                     ) : (
                       <ul className="list">
@@ -585,9 +638,22 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                       previousSummary?.values?.[key]?.value ?? null,
                       (v) => formatDriverValue(key, v)
                     )}
+                    {val?.is_default && (
+                      <>
+                        {" "}
+                        <span
+                          className="pill warn"
+                          data-tooltip="Fallback default used (insufficient data)."
+                          aria-label="Fallback default used (insufficient data)."
+                        >
+                          Defaulted
+                        </span>
+                      </>
+                    )}
+                    {val?.description && <div className="muted">{val.description}</div>}
                     {val.sources && val.sources.length > 0 && (
                       <div className="muted">
-                        Sources:{" "}
+                        Source periods (history):{" "}
                         {val.sources
                           .filter((s) => s.period_end || s.line_item)
                           .map((s) => `${humanLabel(s.line_item || "line")} @ ${s.period_end || "n/a"}${s.note ? ` (${s.note})` : ""}`)
@@ -636,74 +702,197 @@ export default function Home({ ticker, statements, summary, error }: Props) {
             </select>
             <span className="muted period-hint">Fiscal period end date.</span>
           </div>
-          {currentCoverage && (
-            <p className="muted">
-              Coverage: {currentCoverage.total_found}/{currentCoverage.total_expected} line items — IS{" "}
-              {currentCoverage.by_statement?.income_statement?.found ?? 0}/{currentCoverage.by_statement?.income_statement?.expected ?? 0},{" "}
-              BS {currentCoverage.by_statement?.balance_sheet?.found ?? 0}/{currentCoverage.by_statement?.balance_sheet?.expected ?? 0},{" "}
-              CF {currentCoverage.by_statement?.cash_flow?.found ?? 0}/{currentCoverage.by_statement?.cash_flow?.expected ?? 0}
-            </p>
-          )}
-          {currentCoverage?.missing && (
-            <details className="missing-panel">
-              <summary>
-                <span>Missing items</span>
-                <span className={`pill ${missingTotal ? "warn" : "success"}`}>{missingTotal}</span>
-              </summary>
-              <p className="muted missing-hint">Based on mapped line items in this filing.</p>
-              {missingTotal === 0 ? (
-                <p className="muted">All applicable line items present.</p>
-              ) : (
-                <div className="missing-grid">
-                  {missingOrder.map((stmt) => {
-                    const items = currentMissing?.[stmt] ?? [];
-                    if (!items.length) return null;
-                    return (
-                      <div key={stmt} className="missing-block">
-                        <span className="missing-label">{humanLabel(stmt)}</span>
-                        <div className="missing-items">
-                          {items.map((item) => (
-                            <span key={item} className="missing-pill">
-                              {humanLabel(item)}
-                            </span>
-                          ))}
+          {showQuality && (
+            <div className="quality-grid">
+              <div className="quality-card">
+                <div className="quality-header">
+                  <h3 className="quality-title">Coverage</h3>
+                  <span
+                    className="pill"
+                    data-tooltip="Share of mapped line items found for the selected period."
+                    aria-label="Share of mapped line items found for the selected period."
+                  >
+                    Actuals
+                  </span>
+                </div>
+                {currentCoverage ? (
+                  <>
+                    <div className="coverage-hero">
+                      <div>
+                        <div className="coverage-total">
+                          {currentCoverage.total_found}/{currentCoverage.total_expected}
+                        </div>
+                        <div className="muted">Line items covered</div>
+                      </div>
+                      <div className={`coverage-percent${coverageToneClass}`}>{coveragePercentLabel}</div>
+                    </div>
+                    <div className="coverage-bar">
+                      <div
+                        className={`coverage-fill${coverageToneClass}`}
+                        style={{ width: coveragePct !== null ? `${coveragePct * 100}%` : "0%" }}
+                      />
+                    </div>
+                    <div className="coverage-stats">
+                      <div className="metric-item">
+                        <div className="metric-label">Income Statement</div>
+                        <div className="metric-value">
+                          {currentCoverage.by_statement?.income_statement?.found ?? 0}/
+                          {currentCoverage.by_statement?.income_statement?.expected ?? 0}
                         </div>
                       </div>
-                    );
-                  })}
+                      <div className="metric-item">
+                        <div className="metric-label">Balance Sheet</div>
+                        <div className="metric-value">
+                          {currentCoverage.by_statement?.balance_sheet?.found ?? 0}/
+                          {currentCoverage.by_statement?.balance_sheet?.expected ?? 0}
+                        </div>
+                      </div>
+                      <div className="metric-item">
+                        <div className="metric-label">Cash Flow</div>
+                        <div className="metric-value">
+                          {currentCoverage.by_statement?.cash_flow?.found ?? 0}/
+                          {currentCoverage.by_statement?.cash_flow?.expected ?? 0}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">Coverage not available.</p>
+                )}
+              </div>
+              <div className="quality-card">
+                <div className="quality-header">
+                  <h3 className="quality-title">Missing Items</h3>
+                  <span
+                    className={`pill ${missingTotal ? "warn" : "success"}`}
+                    data-tooltip="Count of mapped line items not found in the selected period."
+                    aria-label="Count of mapped line items not found in the selected period."
+                  >
+                    {missingTotal}
+                  </span>
                 </div>
-              )}
-            </details>
-          )}
-          {currentTies && (
-            <div className="muted tie-row">
-              <span className="tie-label">Ties</span>
-              <div className="tie-metrics">
-                <div className="chip">
-                  A − (L+E): {currentTies.bs_tie === null ? "n/a" : formatCurrency(currentTies.bs_tie)}
+                {currentCoverage?.missing ? (
+                  <details className="missing-panel">
+                    <summary>
+                      <span>View missing line items</span>
+                      <span className={`pill ${missingTotal ? "warn" : "success"}`}>{missingTotal}</span>
+                    </summary>
+                    <p className="muted missing-hint">Based on mapped line items in this filing.</p>
+                    {missingTotal === 0 ? (
+                      <p className="muted">All applicable line items present.</p>
+                    ) : (
+                      <div className="missing-grid">
+                        {missingOrder.map((stmt) => {
+                          const items = currentMissing?.[stmt] ?? [];
+                          if (!items.length) return null;
+                          return (
+                            <div key={stmt} className="missing-block">
+                              <span className="missing-label">{humanLabel(stmt)}</span>
+                              <div className="missing-items">
+                                {items.map((item) => (
+                                  <span key={item} className="missing-pill">
+                                    {humanLabel(item)}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </details>
+                ) : (
+                  <p className="muted">Missing item detail not available.</p>
+                )}
+              </div>
+              <div className="quality-card">
+                <div className="quality-header">
+                  <h3 className="quality-title">Statement Ties</h3>
+                  <span
+                    className="pill"
+                    data-tooltip="Accounting tie checks for the selected period."
+                    aria-label="Accounting tie checks for the selected period."
+                  >
+                    Checks
+                  </span>
                 </div>
-                <div className="chip">
-                  CF vs ΔCash: {currentTies.cf_tie === null ? "n/a" : formatCurrency(currentTies.cf_tie)}
+                {currentTies ? (
+                  <div className="tie-metrics">
+                    <div className="chip">
+                      A − (L+E): {currentTies.bs_tie === null ? "n/a" : formatCurrency(currentTies.bs_tie)}
+                    </div>
+                    <div className="chip">
+                      CF vs ΔCash: {currentTies.cf_tie === null ? "n/a" : formatCurrency(currentTies.cf_tie)}
+                    </div>
+                    <div
+                      className={`chip pill ${currentTies.status === "fail" ? "danger" : currentTies.status === "warn" ? "warn" : "success"}`}
+                      aria-label={
+                        currentTies.status === "fail"
+                          ? "Balance sheet does not tie; assets should equal liabilities plus equity."
+                          : currentTies.status === "warn"
+                          ? "Cash flow does not reconcile to the change in cash."
+                          : "Statements tie within tolerance."
+                      }
+                      data-tooltip={
+                        currentTies.status === "fail"
+                          ? "Balance sheet off: Assets ≠ Liabilities + Equity. Check equity/liability mapping."
+                          : currentTies.status === "warn"
+                          ? "Cash flow off: CFO + CFI + CFF ≠ change in cash. Missing CF components or restricted cash?"
+                          : "All statements tie within tolerance."
+                      }
+                    >
+                      {currentTies.status || "ok"}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted">Tie checks not available.</p>
+                )}
+              </div>
+              <div className="quality-card">
+                <div className="quality-header">
+                  <h3 className="quality-title">Time-Travel Backtest</h3>
+                  <span
+                    className="pill"
+                    data-tooltip="Forecast each period using only prior data, then score against actuals."
+                    aria-label="Forecast each period using only prior data, then score against actuals."
+                  >
+                    Quality
+                  </span>
                 </div>
-                <div
-                  className={`chip pill ${currentTies.status === "fail" ? "danger" : currentTies.status === "warn" ? "warn" : "success"}`}
-                  aria-label={
-                    currentTies.status === "fail"
-                      ? "Balance sheet does not tie; assets should equal liabilities plus equity."
-                      : currentTies.status === "warn"
-                      ? "Cash flow does not reconcile to the change in cash."
-                      : "Statements tie within tolerance."
-                  }
-                  data-tooltip={
-                    currentTies.status === "fail"
-                      ? "Balance sheet off: Assets ≠ Liabilities + Equity. Check equity/liability mapping."
-                      : currentTies.status === "warn"
-                      ? "Cash flow off: CFO + CFI + CFF ≠ change in cash. Missing CF components or restricted cash?"
-                      : "All statements tie within tolerance."
-                  }
-                >
-                  {currentTies.status || "ok"}
-                </div>
+                {timeTravel ? (
+                  <div className="metric-grid">
+                    <div className="metric-item">
+                      <div className="metric-label">MAE</div>
+                      <div className="metric-value">{formatCurrency(timeTravel.mae)}</div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">MAPE</div>
+                      <div className="metric-value">{formatPercent(timeTravel.mape)}</div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">Directional Acc.</div>
+                      <div className={`metric-value${daToneClass}`}>
+                        {Number.isNaN(timeTravel.directional_accuracy)
+                          ? "N/A"
+                          : formatPercent(timeTravel.directional_accuracy)}
+                      </div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">Interval Coverage</div>
+                      <div className="metric-value">
+                        {Number.isNaN(timeTravel.interval_coverage)
+                          ? "N/A"
+                          : formatPercent(timeTravel.interval_coverage)}
+                      </div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">Samples</div>
+                      <div className="metric-value">{timeTravel.samples ?? "—"}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted">No time-travel backtest data.</p>
+                )}
               </div>
             </div>
           )}
@@ -768,8 +957,12 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                             <span>{humanLabel(item.line_item)}</span>
                             {showSource && sourcePill}
                             {driverSources && (
-                              <span className="muted">
-                                Drivers: {driverSources.map((s) => s.period_end || "n/a").join(", ")}
+                              <span
+                                className="muted"
+                                data-tooltip="Historical periods used to compute forecast inputs (not predictions)."
+                                aria-label="Historical periods used to compute forecast inputs (not predictions)."
+                              >
+                                Driver inputs (history): {driverSources.map((s) => s.period_end || "n/a").join(", ")}
                               </span>
                             )}
                           </div>

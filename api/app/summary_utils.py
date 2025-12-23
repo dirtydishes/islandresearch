@@ -366,7 +366,7 @@ def compute_drivers(
         "revenue_growth": {
             "value": revenue_growth,
             "sources": revenue_sources,
-            "description": "Revenue growth rate (averaged over 4 periods)",
+            "description": "Historical revenue growth average (last up to 4 periods)",
         },
         "gross_margin": {
             "value": gross_margin,

@@ -200,6 +200,20 @@ function formatPercent(value: number | null) {
   return `${pct.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
+function toneForCoverage(value: number | null) {
+  if (value === null || value === undefined) return null;
+  if (value >= 0.9) return "success";
+  if (value >= 0.75) return "warn";
+  return "danger";
+}
+
+function toneForDirectionalAccuracy(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  if (value >= 0.6) return "success";
+  if (value >= 0.5) return "warn";
+  return "danger";
+}
+
 function formatDriverValue(key: string, value: number | null | undefined) {
   if (value === null || value === undefined) return "—";
   const lower = key.toLowerCase();
@@ -271,6 +285,40 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
     : 0;
   const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
   const timeTravel = model?.backtest_time_travel || null;
+  const coveragePct =
+    coverage && coverage.total_expected ? coverage.total_found / coverage.total_expected : null;
+  const coveragePercentLabel = coveragePct === null ? "—" : formatPercent(coveragePct);
+  const coverageTone = toneForCoverage(coveragePct);
+  const coverageToneClass = coverageTone ? ` ${coverageTone}` : "";
+  const hasDrivers = Object.keys(drivers).length > 0;
+  const daTone = toneForDirectionalAccuracy(timeTravel?.directional_accuracy);
+  const daToneClass = daTone ? ` ${daTone}` : "";
+  const driverPeriodCount = Object.keys(coverageMap || {}).length;
+  const driverWindow = driverPeriodCount ? Math.min(driverPeriodCount, 4) : 0;
+  const forecastPeriodCount = (() => {
+    const periodSet = new Set<string>();
+    Object.values(statements).forEach((payload) => {
+      (payload.forecast || []).forEach((period) => {
+        if (period.period_end) {
+          periodSet.add(period.period_end);
+        }
+      });
+    });
+    return periodSet.size;
+  })();
+  const driverForecastNote = forecastPeriodCount
+    ? `Used to project next ${forecastPeriodCount} period${forecastPeriodCount === 1 ? "" : "s"}`
+    : "Used as base-case inputs for forecasts";
+  const driverContext = [
+    "Derived from historical actuals (not predictions)",
+    model?.as_of ? `As of ${model.as_of}` : null,
+    driverWindow
+      ? `Window: last ${driverWindow} period${driverWindow === 1 ? "" : "s"}`
+      : "Window: last up to 4 periods",
+    driverForecastNote,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" • ");
 
   const handleActualsLimitChange = (value: number) => {
     router.push(`/model?ticker=${ticker}&actuals_limit=${value}`);
@@ -361,15 +409,6 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
                 </select>
               </div>
               <p className="muted">As-of: {formatDate(model.as_of)}</p>
-              {timeTravel && (
-                <p className="muted">
-                  Time-travel MAE {formatCurrency(timeTravel.mae)} | DA{" "}
-                  {Number.isNaN(timeTravel.directional_accuracy)
-                    ? "N/A"
-                    : `${(timeTravel.directional_accuracy * 100).toFixed(0)}%`}
-                  {timeTravel.samples ? ` (n=${timeTravel.samples})` : ""}
-                </p>
-              )}
             </div>
             <div className="card">
               <div className="card-header">
@@ -400,17 +439,101 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
             </div>
             <div className="card">
               <div className="card-header">
+                <h2>Time-Travel Backtest</h2>
+                <span
+                  className="pill"
+                  data-tooltip="Forecast each period using only prior data, then score against actuals."
+                  aria-label="Forecast each period using only prior data, then score against actuals."
+                >
+                  Quality
+                </span>
+              </div>
+              {timeTravel ? (
+                <div className="metric-grid">
+                  <div className="metric-item">
+                    <div className="metric-label">MAE</div>
+                    <div className="metric-value">{formatCurrency(timeTravel.mae)}</div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-label">MAPE</div>
+                    <div className="metric-value">{formatPercent(timeTravel.mape)}</div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-label">Directional Acc.</div>
+                    <div className={`metric-value${daToneClass}`}>
+                      {Number.isNaN(timeTravel.directional_accuracy)
+                        ? "N/A"
+                        : formatPercent(timeTravel.directional_accuracy)}
+                    </div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-label">Interval Coverage</div>
+                    <div className="metric-value">
+                      {Number.isNaN(timeTravel.interval_coverage)
+                        ? "N/A"
+                        : formatPercent(timeTravel.interval_coverage)}
+                    </div>
+                  </div>
+                  <div className="metric-item">
+                    <div className="metric-label">Samples</div>
+                    <div className="metric-value">{timeTravel.samples ?? "—"}</div>
+                  </div>
+                </div>
+              ) : (
+                <p className="muted">No time-travel backtest data.</p>
+              )}
+            </div>
+            <div className="card">
+              <div className="card-header">
                 <h2>Coverage</h2>
-                <span className="pill">Actuals</span>
+                <span
+                  className="pill"
+                  data-tooltip="Share of mapped line items found for the selected period."
+                  aria-label="Share of mapped line items found for the selected period."
+                >
+                  Actuals
+                </span>
               </div>
               {coverage ? (
                 <>
-                  <p className="muted">
-                    Coverage: {coverage.total_found}/{coverage.total_expected} line items — IS{" "}
-                    {coverage.by_statement?.income_statement?.found ?? 0}/{coverage.by_statement?.income_statement?.expected ?? 0},{" "}
-                    BS {coverage.by_statement?.balance_sheet?.found ?? 0}/{coverage.by_statement?.balance_sheet?.expected ?? 0},{" "}
-                    CF {coverage.by_statement?.cash_flow?.found ?? 0}/{coverage.by_statement?.cash_flow?.expected ?? 0}
-                  </p>
+                  <div className="coverage-hero">
+                    <div>
+                      <div className="coverage-total">
+                        {coverage.total_found}/{coverage.total_expected}
+                      </div>
+                      <div className="muted">Line items covered</div>
+                    </div>
+                    <div className={`coverage-percent${coverageToneClass}`}>{coveragePercentLabel}</div>
+                  </div>
+                  <div className="coverage-bar">
+                    <div
+                      className={`coverage-fill${coverageToneClass}`}
+                      style={{ width: coveragePct !== null ? `${coveragePct * 100}%` : "0%" }}
+                    />
+                  </div>
+                  <div className="coverage-stats">
+                    <div className="metric-item">
+                      <div className="metric-label">Income Statement</div>
+                      <div className="metric-value">
+                        {coverage.by_statement?.income_statement?.found ?? 0}/
+                        {coverage.by_statement?.income_statement?.expected ?? 0}
+                      </div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">Balance Sheet</div>
+                      <div className="metric-value">
+                        {coverage.by_statement?.balance_sheet?.found ?? 0}/
+                        {coverage.by_statement?.balance_sheet?.expected ?? 0}
+                      </div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-label">Cash Flow</div>
+                      <div className="metric-value">
+                        {coverage.by_statement?.cash_flow?.found ?? 0}/
+                        {coverage.by_statement?.cash_flow?.expected ?? 0}
+                      </div>
+                    </div>
+                  </div>
                   {missing && (
                     <details className="missing-panel">
                       <summary>
@@ -451,17 +574,39 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
 
           <section className="card full">
             <div className="card-header">
-              <h2>Drivers</h2>
-              <span className="pill">Inputs</span>
+              <h2>Forecast Inputs</h2>
+              <span className="pill">Historical</span>
             </div>
-            {Object.keys(drivers).length === 0 ? (
+            {hasDrivers && driverContext && <p className="muted">{driverContext}</p>}
+            {!hasDrivers ? (
               <p className="muted">No drivers available.</p>
             ) : (
               <ul className="list">
                 {Object.entries(drivers).map(([key, val]) => (
                   <li key={key}>
                     <strong>{humanLabel(key)}</strong>: {formatDriverValue(key, val?.value ?? null)}
+                    {val?.is_default && (
+                      <>
+                        {" "}
+                        <span
+                          className="pill warn"
+                          data-tooltip="Fallback default used (insufficient data)."
+                          aria-label="Fallback default used (insufficient data)."
+                        >
+                          Defaulted
+                        </span>
+                      </>
+                    )}
                     {val?.description && <div className="muted">{val.description}</div>}
+                    {val?.sources && val.sources.length > 0 && (
+                      <div className="muted">
+                        Source periods (history):{" "}
+                        {val.sources
+                          .filter((s) => s.period_end || s.line_item)
+                          .map((s) => `${humanLabel(s.line_item || "line")} @ ${s.period_end || "n/a"}${s.note ? ` (${s.note})` : ""}`)
+                          .join(", ")}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
