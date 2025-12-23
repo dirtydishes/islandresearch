@@ -40,6 +40,8 @@ pnpm-debug.log*
 api/app/data/
 api/tests/__pycache__/
 frontend/.next/cache/
+data/
+storage/
 storage/raw/
 workers/data/
 workers/jobs/__pycache__/
