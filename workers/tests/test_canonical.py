@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from workers.canonical import aggregate_canonical_rows
+from workers.canonical import aggregate_canonical_rows, log_tie_checks
 from workers.parser import parse_inline_xbrl
 
 
@@ -117,6 +117,23 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
         aggregated = aggregate_canonical_rows(rows)
         self.assertEqual(len(aggregated), 1)
         self.assertEqual(aggregated[0]["line_item"], "revenue")
+
+
+class TieCheckTests(unittest.TestCase):
+    def test_detects_balance_sheet_and_cash_flow_violations(self) -> None:
+        period = date(2024, 12, 31)
+        aggregated = [
+            {"period_end": period, "statement": "balance_sheet", "line_item": "assets", "value": 100.0},
+            {"period_end": period, "statement": "balance_sheet", "line_item": "liabilities", "value": 60.0},
+            {"period_end": period, "statement": "balance_sheet", "line_item": "equity", "value": 30.0},
+            {"period_end": period, "statement": "cash_flow", "line_item": "cfo", "value": 10.0},
+            {"period_end": period, "statement": "cash_flow", "line_item": "cfi", "value": -3.0},
+            {"period_end": period, "statement": "cash_flow", "line_item": "cff", "value": -2.0},
+            {"period_end": period, "statement": "cash_flow", "line_item": "change_in_cash", "value": 4.0},
+        ]
+        violations = log_tie_checks(aggregated, strict=False)
+        self.assertTrue(any("Balance sheet tie off" in msg for msg in violations))
+        self.assertTrue(any("Cash flow tie off" in msg for msg in violations))
 
     def test_prefers_shorter_duration_for_income_statement(self) -> None:
         rows = [

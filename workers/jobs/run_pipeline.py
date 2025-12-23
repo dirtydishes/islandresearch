@@ -8,7 +8,9 @@ from .materialize_canonical import run_materialization
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline(ticker: str, limit: int = 8, storage_root: Optional[str] = None) -> dict:
+def run_pipeline(
+    ticker: str, limit: int = 8, storage_root: Optional[str] = None, strict_ties: bool = True
+) -> dict:
     """
     End-to-end helper: fetch filings, parse saved filings (default last 8), then materialize canonical facts.
     """
@@ -22,7 +24,7 @@ def run_pipeline(ticker: str, limit: int = 8, storage_root: Optional[str] = None
         if not path:
             continue
         parsed.append(parse_filing(accession, cik, ticker, path))
-    inserted = run_materialization(ticker)
+    inserted = run_materialization(ticker, strict_ties=strict_ties)
     dropped_total = sum(item.get("dropped", 0) for item in parsed)
     return {
         "ticker": ticker.upper(),

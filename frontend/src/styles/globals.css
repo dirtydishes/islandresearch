@@ -633,7 +633,15 @@ body {
   background: rgba(255, 255, 255, 0.02);
 }
 
-.statement-header h3 {
+.statement-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
+}
+
+.statement-header h3 {
+  margin: 0;
   color: #f4f6fb;
 }

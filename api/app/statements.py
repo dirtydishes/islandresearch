@@ -127,7 +127,8 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
     # Order line items for each statement using a stable display order.
     for period_data in period_map.values():
         ordered: Dict[str, list] = {}
-        for stmt, items in period_data["lines"].items():
+        for stmt in STATEMENT_DISPLAY_ORDER.keys():
+            items = period_data["lines"].get(stmt, [])
             order = STATEMENT_DISPLAY_ORDER.get(stmt, [])
             ordered[stmt] = sorted(
                 items,

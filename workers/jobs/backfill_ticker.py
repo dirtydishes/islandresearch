@@ -9,7 +9,9 @@ from ..db import list_filings_by_ticker
 logger = logging.getLogger(__name__)
 
 
-def backfill_ticker(ticker: str, limit: int = 24, storage_root: Optional[str] = None) -> dict:
+def backfill_ticker(
+    ticker: str, limit: int = 24, storage_root: Optional[str] = None, strict_ties: bool = True
+) -> dict:
     """
     Fetch and parse missing recent filings (default 24) for a ticker, then materialize canonical facts.
     Use when expanding historical coverage beyond the default pipeline depth.
@@ -41,7 +43,7 @@ def backfill_ticker(ticker: str, limit: int = 24, storage_root: Optional[str] = 
             parsed_accessions.add(accession)
             if len(parsed) >= limit:
                 break
-    inserted = run_materialization(ticker)
+    inserted = run_materialization(ticker, strict_ties=strict_ties)
     dropped_total = sum(item.get("dropped", 0) for item in parsed)
     result = {
         "ticker": ticker.upper(),

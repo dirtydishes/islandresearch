@@ -327,6 +327,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const currentPeriodLines = selectedPeriod
     ? statements.find((p) => p.period_end === selectedPeriod)?.lines ?? {}
     : statements[0]?.lines ?? {};
+  const statementKeys = ["income_statement", "balance_sheet", "cash_flow"];
   const prevPeriod = selectedPeriod
     ? (() => {
         const idx = statements.findIndex((p) => p.period_end === selectedPeriod);
@@ -900,88 +901,103 @@ export default function Home({ ticker, statements, summary, error }: Props) {
             <p className="muted">No statements for {ticker}. Ingest and parse first.</p>
           ) : (
             <div className="statement">
-              {Object.entries(currentPeriodLines).map(([stmt, items]) => (
-                <div key={stmt} className="statement-block">
-                  <h3 style={{ marginBottom: "10px" }}>{humanLabel(stmt)}</h3>
-                  <ul>
-                    {items.map((item) => {
-                      const driverSources = summary?.drivers?.[item.line_item ?? ""]?.sources;
-                      const summarySource = currentSummarySources[item.line_item ?? ""];
-                      const sourcePath = item.source_path || summarySource?.path;
-                      const filingFallback = item.source_accession
-                        ? summary?.filings?.find((f) => f.accession === item.source_accession)
-                        : null;
-                      const sourceForm = item.source_form || filingFallback?.form || null;
-                      const sourceFiledAt = item.source_filed_at || filingFallback?.filed_at || null;
-                      const sourceAccession = item.source_accession || null;
-                      const sourceLink = sourcePath ? buildSourceUrl(sourcePath) : null;
-                      const sourceLabel = `Source: ${buildSourceLabel(
-                        ticker,
-                        sourceForm,
-                        currentPeriodKey || summarySource?.period_end || null
-                      )}`;
-                      const sourceUnit = item.unit || summarySource?.unit;
-                      const showSource = Boolean(sourcePath || sourceAccession || summarySource);
-                      const sourceTooltip = [
-                        `Ticker: ${ticker}`,
-                        `Form: ${sourceForm ? formatForm(sourceForm) : "n/a"}`,
-                        `Filed: ${sourceFiledAt ? formatDate(sourceFiledAt) : "n/a"}`,
-                        `Accession: ${sourceAccession || "n/a"}`,
-                        `Statement: ${humanLabel(summarySource?.statement || stmt)}`,
-                        `Line item: ${humanLabel(item.line_item)}`,
-                        `Period end: ${currentPeriodKey || "n/a"}`,
-                        `Unit: ${sourceUnit || "n/a"}`,
-                        sourcePath ? `Path: ${sourcePath}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" • ");
-                      const sourcePill = sourceLink ? (
-                        <a
-                          className="pill source-pill"
-                          data-tooltip={sourceTooltip}
-                          aria-label={sourceTooltip}
-                          href={sourceLink}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {sourceLabel} {formatUnit(sourceUnit)}
-                        </a>
-                      ) : (
-                        <span className="pill source-pill" data-tooltip={sourceTooltip} aria-label={sourceTooltip}>
-                          {sourceLabel} {formatUnit(sourceUnit)}
+              {statementKeys.map((stmt) => {
+                const items = currentPeriodLines[stmt] || [];
+                const missingCount = currentMissing?.[stmt]?.length ?? 0;
+                return (
+                  <div key={stmt} className="statement-block">
+                    <div className="statement-header">
+                      <h3 style={{ marginBottom: "10px" }}>{humanLabel(stmt)}</h3>
+                      {currentCoverage && (
+                        <span className={`pill ${missingCount ? "warn" : "success"}`}>
+                          {missingCount ? `Missing ${missingCount}` : "Complete"}
                         </span>
-                      );
-                      return (
-                        <li key={`${stmt}-${item.line_item}`}>
-                          <div className="statement-meta">
-                            <span>{humanLabel(item.line_item)}</span>
-                            {showSource && sourcePill}
-                            {driverSources && (
-                              <span
-                                className="muted"
-                                data-tooltip="Historical periods used to compute forecast inputs (not predictions)."
-                                aria-label="Historical periods used to compute forecast inputs (not predictions)."
-                              >
-                                Driver inputs (history): {driverSources.map((s) => s.period_end || "n/a").join(", ")}
-                              </span>
-                            )}
-                          </div>
-                          {renderValueWithDelta(
-                            item.value,
-                            (() => {
-                              if (!prevPeriod) return null;
-                              const prevLines = prevPeriod.lines[stmt] || [];
-                              const hit = prevLines.find((l) => l.line_item === item.line_item);
-                              return hit?.value ?? null;
-                            })(),
-                            formatCurrency
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ))}
+                      )}
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="muted">No data for {humanLabel(stmt)} in this period.</p>
+                    ) : (
+                      <ul>
+                        {items.map((item) => {
+                          const driverSources = summary?.drivers?.[item.line_item ?? ""]?.sources;
+                          const summarySource = currentSummarySources[item.line_item ?? ""];
+                          const sourcePath = item.source_path || summarySource?.path;
+                          const filingFallback = item.source_accession
+                            ? summary?.filings?.find((f) => f.accession === item.source_accession)
+                            : null;
+                          const sourceForm = item.source_form || filingFallback?.form || null;
+                          const sourceFiledAt = item.source_filed_at || filingFallback?.filed_at || null;
+                          const sourceAccession = item.source_accession || null;
+                          const sourceLink = sourcePath ? buildSourceUrl(sourcePath) : null;
+                          const sourceLabel = `Source: ${buildSourceLabel(
+                            ticker,
+                            sourceForm,
+                            currentPeriodKey || summarySource?.period_end || null
+                          )}`;
+                          const sourceUnit = item.unit || summarySource?.unit;
+                          const showSource = Boolean(sourcePath || sourceAccession || summarySource);
+                          const sourceTooltip = [
+                            `Ticker: ${ticker}`,
+                            `Form: ${sourceForm ? formatForm(sourceForm) : "n/a"}`,
+                            `Filed: ${sourceFiledAt ? formatDate(sourceFiledAt) : "n/a"}`,
+                            `Accession: ${sourceAccession || "n/a"}`,
+                            `Statement: ${humanLabel(summarySource?.statement || stmt)}`,
+                            `Line item: ${humanLabel(item.line_item)}`,
+                            `Period end: ${currentPeriodKey || "n/a"}`,
+                            `Unit: ${sourceUnit || "n/a"}`,
+                            sourcePath ? `Path: ${sourcePath}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" • ");
+                          const sourcePill = sourceLink ? (
+                            <a
+                              className="pill source-pill"
+                              data-tooltip={sourceTooltip}
+                              aria-label={sourceTooltip}
+                              href={sourceLink}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {sourceLabel} {formatUnit(sourceUnit)}
+                            </a>
+                          ) : (
+                            <span className="pill source-pill" data-tooltip={sourceTooltip} aria-label={sourceTooltip}>
+                              {sourceLabel} {formatUnit(sourceUnit)}
+                            </span>
+                          );
+                          return (
+                            <li key={`${stmt}-${item.line_item}`}>
+                              <div className="statement-meta">
+                                <span>{humanLabel(item.line_item)}</span>
+                                {showSource && sourcePill}
+                                {driverSources && (
+                                  <span
+                                    className="muted"
+                                    data-tooltip="Historical periods used to compute forecast inputs (not predictions)."
+                                    aria-label="Historical periods used to compute forecast inputs (not predictions)."
+                                  >
+                                    Driver inputs (history): {driverSources.map((s) => s.period_end || "n/a").join(", ")}
+                                  </span>
+                                )}
+                              </div>
+                              {renderValueWithDelta(
+                                item.value,
+                                (() => {
+                                  if (!prevPeriod) return null;
+                                  const prevLines = prevPeriod.lines[stmt] || [];
+                                  const hit = prevLines.find((l) => l.line_item === item.line_item);
+                                  return hit?.value ?? null;
+                                })(),
+                                formatCurrency
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

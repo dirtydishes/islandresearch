@@ -404,8 +404,7 @@ def _add_cash_flow_residuals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return sorted(combined, key=lambda x: (x.get("period_end"), x.get("statement"), x.get("line_item")))
 
 
-def log_tie_checks(aggregated: List[Dict[str, Any]]) -> None:
-    """Log tie deltas per period to aid debugging; optionally raise on violations."""
+def _collect_tie_violations(aggregated: List[Dict[str, Any]], tolerance: Optional[float] = None) -> List[str]:
     by_period: Dict[Any, Dict[str, Dict[str, Any]]] = {}
     for row in aggregated:
         period = row.get("period_end")
@@ -413,6 +412,8 @@ def log_tie_checks(aggregated: List[Dict[str, Any]]) -> None:
         if not period or not stmt:
             continue
         by_period.setdefault(period, {}).setdefault(stmt, {})[row.get("line_item")] = row.get("value")
+
+    tol = TIE_TOLERANCE if tolerance is None else tolerance
     violations: List[str] = []
     for period, stmts in by_period.items():
         bs = stmts.get("balance_sheet", {})
@@ -421,12 +422,33 @@ def log_tie_checks(aggregated: List[Dict[str, Any]]) -> None:
         equity = bs.get("equity")
         if assets is not None and liabilities is not None and equity is not None:
             delta = assets - (liabilities + equity)
-            if abs(delta) > TIE_TOLERANCE:
-                msg = f"Balance sheet tie off for {period}: {delta}"
-                logger.warning(msg)
-                violations.append(msg)
-    if HARD_FAIL_TIES and violations:
+            if abs(delta) > tol:
+                violations.append(f"Balance sheet tie off for {period}: {delta}")
+
+        cf = stmts.get("cash_flow", {})
+        cfo = cf.get("cfo")
+        cfi = cf.get("cfi")
+        cff = cf.get("cff")
+        change_in_cash = cf.get("change_in_cash")
+        fx_on_cash = cf.get("fx_on_cash") or 0
+        restricted = cf.get("change_in_restricted_cash") or 0
+        if None not in (cfo, cfi, cff, change_in_cash):
+            delta = (cfo + cfi + cff + fx_on_cash + restricted) - change_in_cash
+            if abs(delta) > tol:
+                violations.append(f"Cash flow tie off for {period}: {delta}")
+
+    return violations
+
+
+def log_tie_checks(aggregated: List[Dict[str, Any]], strict: Optional[bool] = None) -> List[str]:
+    """Log tie deltas per period to aid debugging; optionally raise on violations."""
+    violations = _collect_tie_violations(aggregated)
+    for msg in violations:
+        logger.warning(msg)
+    enforce = HARD_FAIL_TIES if strict is None else strict
+    if enforce and violations:
         raise ValueError(f"Tie violations detected: {'; '.join(violations)}")
+    return violations
 
 
 def _infer_default_period_end(cur, ticker: str) -> Optional[Any]:
@@ -458,7 +480,7 @@ def _infer_default_period_end(cur, ticker: str) -> Optional[Any]:
     return row[0]
 
 
-def materialize_canonical_for_ticker(ticker: str) -> int:
+def materialize_canonical_for_ticker(ticker: str, strict_ties: Optional[bool] = None) -> int:
     """
     Aggregate facts by period and line item so each period has a single normalized value per tag.
     """
@@ -516,6 +538,6 @@ def materialize_canonical_for_ticker(ticker: str) -> int:
                 ]
                 cur.executemany(insert_sql, params)
                 inserted = cur.rowcount
-            log_tie_checks(aggregated or [])
+            log_tie_checks(aggregated or [], strict=strict_ties)
         conn.commit()
     return inserted
