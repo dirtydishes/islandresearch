@@ -66,6 +66,7 @@ type SummaryResponse = {
   >;
   ties?: Record<string, { period_end: string; bs_tie: number | null; cf_sum: number | null; cash_delta: number | null; cf_tie: number | null }>;
   backtest?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
+  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
 };
 
 type Props = {

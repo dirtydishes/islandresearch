@@ -830,6 +830,41 @@ def compute_revenue_backtest(
     return scored
 
 
+def compute_revenue_time_travel(
+    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
+) -> Optional[Dict[str, float]]:
+    """
+    Time-travel backtest: forecast each next period using only data available as of the prior period.
+    """
+    if not metrics or len(metrics) < 2:
+        return None
+
+    periods = sorted(metrics.keys())
+    actuals: List[float] = []
+    forecasts: List[float] = []
+
+    for idx in range(1, len(periods)):
+        as_of_period = periods[idx - 1]
+        metrics_asof = {p: metrics[p] for p in periods[:idx]}
+        drivers = compute_drivers(metrics_asof)
+        prev_revenue = metrics_asof[as_of_period]["values"].get("revenue", {}).get("value")
+        if prev_revenue is None:
+            continue
+        growth = drivers.get("revenue_growth", {}).get("value") or 0.0
+        forecast = prev_revenue * (1 + growth)
+        actual = metrics[periods[idx]]["values"].get("revenue", {}).get("value")
+        if actual is None:
+            continue
+        forecasts.append(forecast)
+        actuals.append(actual)
+
+    if not actuals or not forecasts:
+        return None
+    scored = compute_backtest_metrics(actuals, forecasts)
+    scored["samples"] = len(actuals)
+    return scored
+
+
 def compute_coverage(
     metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
     applicable_by_period: Optional[Dict[str, Dict[str, Set[str]]]] = None,

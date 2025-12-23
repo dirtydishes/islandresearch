@@ -31,6 +31,17 @@ type ModelResponse = {
   scenarios?: string[];
   statements: Record<string, ModelStatement>;
   forecast_summary?: Record<string, Record<string, { point_estimate?: number; low?: number; high?: number }>>;
+  coverage?: Record<
+    string,
+    {
+      period_end: string;
+      total_found: number;
+      total_expected: number;
+      by_statement: Record<string, { found: number; expected: number }>;
+      missing?: Record<string, string[]>;
+    }
+  >;
+  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
 };
 
 type Props = {
@@ -250,6 +261,16 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
 
   const drivers = model?.drivers || {};
   const statements = model?.statements || {};
+  const coverageMap = model?.coverage || {};
+  const coverageKey =
+    model?.as_of && coverageMap[model.as_of] ? model.as_of : Object.keys(coverageMap)[0] || null;
+  const coverage = coverageKey ? coverageMap[coverageKey] : null;
+  const missing = coverage?.missing || null;
+  const missingTotal = missing
+    ? Object.values(missing).reduce((sum, items) => sum + (items?.length ?? 0), 0)
+    : 0;
+  const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
+  const timeTravel = model?.backtest_time_travel || null;
 
   const handleActualsLimitChange = (value: number) => {
     router.push(`/model?ticker=${ticker}&actuals_limit=${value}`);
@@ -340,6 +361,15 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
                 </select>
               </div>
               <p className="muted">As-of: {formatDate(model.as_of)}</p>
+              {timeTravel && (
+                <p className="muted">
+                  Time-travel MAE {formatCurrency(timeTravel.mae)} | DA{" "}
+                  {Number.isNaN(timeTravel.directional_accuracy)
+                    ? "N/A"
+                    : `${(timeTravel.directional_accuracy * 100).toFixed(0)}%`}
+                  {timeTravel.samples ? ` (n=${timeTravel.samples})` : ""}
+                </p>
+              )}
             </div>
             <div className="card">
               <div className="card-header">
@@ -366,6 +396,55 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
                 </div>
               ) : (
                 <p className="muted">No forecast summary available.</p>
+              )}
+            </div>
+            <div className="card">
+              <div className="card-header">
+                <h2>Coverage</h2>
+                <span className="pill">Actuals</span>
+              </div>
+              {coverage ? (
+                <>
+                  <p className="muted">
+                    Coverage: {coverage.total_found}/{coverage.total_expected} line items — IS{" "}
+                    {coverage.by_statement?.income_statement?.found ?? 0}/{coverage.by_statement?.income_statement?.expected ?? 0},{" "}
+                    BS {coverage.by_statement?.balance_sheet?.found ?? 0}/{coverage.by_statement?.balance_sheet?.expected ?? 0},{" "}
+                    CF {coverage.by_statement?.cash_flow?.found ?? 0}/{coverage.by_statement?.cash_flow?.expected ?? 0}
+                  </p>
+                  {missing && (
+                    <details className="missing-panel">
+                      <summary>
+                        <span>Missing items</span>
+                        <span className={`pill ${missingTotal ? "warn" : "success"}`}>{missingTotal}</span>
+                      </summary>
+                      <p className="muted missing-hint">Based on mapped line items in this period.</p>
+                      {missingTotal === 0 ? (
+                        <p className="muted">All applicable line items present.</p>
+                      ) : (
+                        <div className="missing-grid">
+                          {missingOrder.map((stmt) => {
+                            const items = missing?.[stmt] ?? [];
+                            if (!items.length) return null;
+                            return (
+                              <div key={stmt} className="missing-block">
+                                <span className="missing-label">{humanLabel(stmt)}</span>
+                                <div className="missing-items">
+                                  {items.map((item) => (
+                                    <span key={item} className="missing-pill">
+                                      {humanLabel(item)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </details>
+                  )}
+                </>
+              ) : (
+                <p className="muted">Coverage not available.</p>
               )}
             </div>
           </section>

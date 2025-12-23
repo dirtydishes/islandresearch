@@ -147,6 +147,8 @@ class ModelResponse(BaseModel):
     scenarios: List[str]
     statements: Dict[str, ModelStatement]
     forecast_summary: Optional[Dict[str, Any]] = None
+    coverage: Optional[Dict[str, Any]] = None
+    backtest_time_travel: Optional[Dict[str, Any]] = None
 
 
 class StatementLine(BaseModel):
@@ -182,6 +184,8 @@ class SummaryResponse(BaseModel):
     dropped_facts: int | None = None
     coverage: dict | None = None
     ties: dict | None = None
+    backtest: dict | None = None
+    backtest_time_travel: dict | None = None
 
 
 class TriggerResponse(BaseModel):
@@ -192,6 +196,12 @@ class TriggerResponse(BaseModel):
     queue: str
     covered: bool
     dropped_facts: int | None = None
+
+
+class BacktestResponse(BaseModel):
+    ticker: str
+    backtest: dict | None = None
+    backtest_time_travel: dict | None = None
 
 
 @app.get("/health", tags=["health"])
@@ -328,6 +338,19 @@ def summary(ticker: str) -> SummaryResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load summary for {ticker}: {exc}")
     return data
+
+
+@app.get("/backtest/{ticker}", response_model=BacktestResponse, tags=["backtest"])
+def backtest(ticker: str) -> BacktestResponse:
+    try:
+        data = get_summary(ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load backtest for {ticker}: {exc}")
+    return BacktestResponse(
+        ticker=ticker.upper(),
+        backtest=data.get("backtest"),
+        backtest_time_travel=data.get("backtest_time_travel"),
+    )
 
 
 @app.get("/model/{ticker}", response_model=ModelResponse, tags=["model"])

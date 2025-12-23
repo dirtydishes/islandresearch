@@ -23,6 +23,7 @@ from summary_utils import (
     compute_coverage,
     compute_drivers,
     compute_revenue_backtest,
+    compute_revenue_time_travel,
     compute_tie_checks,
     filter_allowed,
 )
@@ -493,6 +494,18 @@ class BacktestMetricsTests(unittest.TestCase):
         assert backtest is not None
         self.assertEqual(backtest["samples"], 2)
         self.assertTrue(backtest["mae"] >= 0)
+
+    def test_compute_revenue_time_travel(self) -> None:
+        metrics = {
+            "2023-12-31": {"values": {"revenue": {"value": 100.0, "unit": "USD"}}},
+            "2024-12-31": {"values": {"revenue": {"value": 120.0, "unit": "USD"}}},
+            "2025-12-31": {"values": {"revenue": {"value": 150.0, "unit": "USD"}}},
+        }
+        backtest = compute_revenue_time_travel(metrics)
+        self.assertIsNotNone(backtest)
+        assert backtest is not None
+        self.assertEqual(backtest["samples"], 2)
+        self.assertAlmostEqual(backtest["mae"], 12.0)
 
 
 class TieChecksTests(unittest.TestCase):

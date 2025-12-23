@@ -87,4 +87,6 @@ def get_model(ticker: str, actuals_limit: int = 4) -> Dict[str, Any]:
         "scenarios": scenarios,
         "statements": statements,
         "forecast_summary": build_forecast_summary(forecast),
+        "coverage": summary.get("coverage"),
+        "backtest_time_travel": summary.get("backtest_time_travel"),
     }

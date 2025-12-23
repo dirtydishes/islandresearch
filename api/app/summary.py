@@ -9,6 +9,7 @@ from .summary_utils import (
     build_forecast,
     compute_drivers,
     compute_revenue_backtest,
+    compute_revenue_time_travel,
     compute_tie_checks,
     compute_coverage,
     filter_allowed,
@@ -166,6 +167,7 @@ def get_summary(ticker: str) -> Dict[str, Any]:
     # Filter metrics to canonical schema and compute driver-based forecast.
     drivers = compute_drivers(allowed_metrics)
     backtest = compute_revenue_backtest(allowed_metrics)
+    time_travel_backtest = compute_revenue_time_travel(allowed_metrics)
     coverage = compute_coverage(allowed_metrics, applicable_by_period)
     ties = compute_tie_checks(allowed_metrics)
     forecast: List[Dict[str, Any]] = []
@@ -184,6 +186,7 @@ def get_summary(ticker: str) -> Dict[str, Any]:
         "drivers": drivers,
         "forecast": forecast,
         "backtest": backtest,
+        "backtest_time_travel": time_travel_backtest,
         "coverage": coverage,
         "ties": ties,
     }
