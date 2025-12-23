@@ -356,6 +356,104 @@ class TieCheckTests(unittest.TestCase):
         self.assertAlmostEqual(_get("income_statement", "ebitda"), 25.0)
         self.assertAlmostEqual(_get("cash_flow", "change_in_cash"), 37.0)
 
+    def test_derives_gross_profit_and_operating_expenses(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "revenue",
+                "value": 100.0,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "cogs",
+                "value": 40.0,
+                "unit": "USD",
+            },
+            {
+                "id": 3,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "operating_income",
+                "value": 20.0,
+                "unit": "USD",
+            },
+            {
+                "id": 4,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "total_expenses",
+                "value": 70.0,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _add_income_statement_derivations
+
+        enriched = _add_income_statement_derivations(aggregated)
+        gross_profit = next(r for r in enriched if r["line_item"] == "gross_profit")
+        operating_expenses = next(r for r in enriched if r["line_item"] == "operating_expenses")
+        self.assertAlmostEqual(gross_profit["value"], 60.0)
+        self.assertAlmostEqual(operating_expenses["value"], 30.0)
+
+    def test_derives_liabilities_from_equity_total(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_end": date(2024, 3, 31),
+                "period_type": "instant",
+                "statement": "balance_sheet",
+                "line_item": "liabilities_equity",
+                "value": 100.0,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_end": date(2024, 3, 31),
+                "period_type": "instant",
+                "statement": "balance_sheet",
+                "line_item": "equity",
+                "value": 30.0,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _add_balance_sheet_residuals
+
+        enriched = _add_balance_sheet_residuals(aggregated)
+        liabilities = next(r for r in enriched if r["line_item"] == "liabilities")
+        self.assertAlmostEqual(liabilities["value"], 70.0)
+
 
 class CanonicalFromRealFilingTests(unittest.TestCase):
     def test_aggregates_real_filing_facts(self) -> None:

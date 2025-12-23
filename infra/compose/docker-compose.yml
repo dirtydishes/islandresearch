@@ -33,6 +33,22 @@ services:
       - ../../data:/data
       - ../../storage:/storage
 
+  scheduler:
+    build:
+      context: ../../workers
+    command: python -m workers.jobs.scheduler
+    env_file:
+      - ../../.env
+    depends_on:
+      - db
+      - redis
+      - objectstore
+    volumes:
+      - ../../workers:/app/workers
+      - ../../data:/data
+      - ../../storage:/storage
+    restart: unless-stopped
+
   frontend:
     build:
       context: ../../frontend

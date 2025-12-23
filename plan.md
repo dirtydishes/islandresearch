@@ -20,7 +20,7 @@ This *is* a deterministic, auditable research engine that happens to generate pr
 - Parsing: expanded inline XBRL + HTML table scraper writes demo facts to Postgres; handles contexts/units/scale with a refetch fallback for index-only saves.
 - Canonicalization: normalized aggregation of facts by period/tag via shared helper; derived ratios and a +2% stub forecast power the `/summary` endpoint; unit tests cover parser + canonical aggregation.
 - UI: Next.js page renders canonical statements, derived metrics, filings list, and a simple forecast; mock page backed by `/mock/model`.
-- Infra: Compose stack stands up api/worker/frontend/db/redis/minio; `.env.example` seeded; ticker coverage from curated CSV with SEC JSON fallback.
+- Infra: Compose stack stands up api/worker/frontend/db/redis/minio plus a scheduler for nightly incremental + weekly strict backfills; `.env.example` seeded; ticker coverage from curated CSV with SEC JSON fallback.
 - Gaps: minimal validation/backfills, no backtests, no provenance UI, limited tag coverage beyond core tags, prefer Python 3.11/3.12 for psycopg wheels, and no production-grade audit trail.
 
 ---

@@ -226,6 +226,29 @@ def _add_balance_sheet_residuals(rows: List[Dict[str, Any]]) -> List[Dict[str, A
             "other_assets_noncurrent",
             period_rows,
         )
+        line_map = {r.get("line_item"): r for r in period_rows}
+        liabilities_equity = line_map.get("liabilities_equity")
+        equity = line_map.get("equity")
+        if "liabilities" not in line_map and liabilities_equity and equity:
+            if liabilities_equity.get("unit") == equity.get("unit"):
+                total_val = liabilities_equity.get("value")
+                equity_val = equity.get("value")
+                if total_val is not None and equity_val is not None:
+                    derived.append(
+                        {
+                            "ticker": liabilities_equity.get("ticker"),
+                            "cik": liabilities_equity.get("cik"),
+                            "accession": liabilities_equity.get("accession"),
+                            "period_start": liabilities_equity.get("period_start"),
+                            "period_end": liabilities_equity.get("period_end"),
+                            "period_type": liabilities_equity.get("period_type"),
+                            "statement": "balance_sheet",
+                            "line_item": "liabilities",
+                            "value": float(total_val) - float(equity_val),
+                            "unit": liabilities_equity.get("unit"),
+                            "source_fact_id": None,
+                        }
+                    )
         _residual(
             "liabilities_current",
             ["accounts_payable", "accrued_expenses", "deferred_revenue_current", "debt_current"],
@@ -290,6 +313,17 @@ def _add_income_statement_derivations(rows: List[Dict[str, Any]]) -> List[Dict[s
         revenue = line_map.get("revenue")
         gross_profit = line_map.get("gross_profit")
         operating_expenses = line_map.get("operating_expenses")
+        operating_income = line_map.get("operating_income")
+        total_expenses = line_map.get("total_expenses")
+
+        if "gross_profit" not in line_map and revenue and line_map.get("cogs"):
+            unit = revenue.get("unit")
+            cogs_val = _value(line_map.get("cogs"), unit)
+            rev_val = _value(revenue, unit)
+            if rev_val is not None and cogs_val is not None:
+                gp_row = _append_row(revenue, "gross_profit", rev_val - cogs_val)
+                line_map["gross_profit"] = gp_row
+                gross_profit = gp_row
 
         if "cogs" not in line_map and revenue and gross_profit and revenue.get("unit") == gross_profit.get("unit"):
             rev_val = _value(revenue, revenue.get("unit"))
@@ -297,6 +331,25 @@ def _add_income_statement_derivations(rows: List[Dict[str, Any]]) -> List[Dict[s
             if rev_val is not None and gp_val is not None:
                 cogs_row = _append_row(revenue, "cogs", rev_val - gp_val)
                 line_map["cogs"] = cogs_row
+
+        if "operating_expenses" not in line_map:
+            unit = None
+            if total_expenses:
+                unit = total_expenses.get("unit")
+                op_val = _value(total_expenses, unit)
+                cogs_val = _value(line_map.get("cogs"), unit)
+                if op_val is not None and cogs_val is not None:
+                    op_row = _append_row(total_expenses, "operating_expenses", op_val - cogs_val)
+                    line_map["operating_expenses"] = op_row
+                    operating_expenses = op_row
+            if operating_expenses is None and operating_income and gross_profit:
+                unit = gross_profit.get("unit")
+                gp_val = _value(gross_profit, unit)
+                op_income_val = _value(operating_income, unit)
+                if gp_val is not None and op_income_val is not None:
+                    op_row = _append_row(gross_profit, "operating_expenses", gp_val - op_income_val)
+                    line_map["operating_expenses"] = op_row
+                    operating_expenses = op_row
 
         if "total_expenses" not in line_map and operating_expenses:
             unit = operating_expenses.get("unit")
@@ -306,7 +359,6 @@ def _add_income_statement_derivations(rows: List[Dict[str, Any]]) -> List[Dict[s
                 _append_row(operating_expenses, "total_expenses", op_val + cogs_val)
 
         if "ebitda" not in line_map:
-            operating_income = line_map.get("operating_income")
             depreciation = cash_map.get("depreciation_amortization")
             if operating_income and depreciation and operating_income.get("unit") == depreciation.get("unit"):
                 op_val = _value(operating_income, operating_income.get("unit"))

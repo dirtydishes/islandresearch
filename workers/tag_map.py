@@ -322,6 +322,7 @@ TAG_MAP: Dict[str, Tuple[str, str]] = {
     "us-gaap:RetainedEarningsAccumulatedDeficit": ("retained_earnings", "balance_sheet"),
     "us-gaap:TreasuryStockValue": ("treasury_stock", "balance_sheet"),
     "us-gaap:TreasuryStockCommon": ("treasury_stock", "balance_sheet"),
+    "us-gaap:TreasuryStockCommonValue": ("treasury_stock", "balance_sheet"),
     "us-gaap:TreasuryStockCommonSharesValue": ("treasury_stock", "balance_sheet"),
     "us-gaap:TreasuryStockCommonStockValue": ("treasury_stock", "balance_sheet"),
     "us-gaap:MinorityInterest": ("minority_interest", "balance_sheet"),

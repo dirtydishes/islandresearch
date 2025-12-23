@@ -38,6 +38,7 @@ class TagMapTests(unittest.TestCase):
             "us-gaap:DividendsPaid",
             "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
             "us-gaap:PaymentsForRepurchaseOfEquity",
+            "us-gaap:TreasuryStockCommonValue",
         ]
         for tag in expected:
             self.assertIn(tag, TAG_MAP)
