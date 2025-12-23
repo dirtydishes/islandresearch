@@ -1,0 +1,217 @@
+name: Discord notifications
+
+on:
+  push:
+    branches: ["main"]
+  workflow_run:
+    workflows: ["CI"]   # <-- rename this to match your CI workflow name EXACTLY
+    types: [completed]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-notify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push_to_discord:
+    name: Push -> Discord (main)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build push summary
+        id: summary
+        run: |
+          set -euo pipefail
+
+          REPO="${GITHUB_REPOSITORY}"
+          BRANCH="${GITHUB_REF_NAME}"
+          ACTOR="${GITHUB_ACTOR}"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          COMMIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          COMPARE_URL="${GITHUB_EVENT_HEAD_COMMIT_URL:-}"
+
+          # Commit range for push events
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          # Get up to 10 commit subject lines
+          # (uses the GitHub API via event payload? not available here; so use the push payload)
+          # Push payload includes commits array in GITHUB_EVENT_PATH.
+          COMMITS="$(python3 - <<'PY'
+import json, os
+path=os.environ["GITHUB_EVENT_PATH"]
+evt=json.load(open(path))
+commits=evt.get("commits", [])
+lines=[]
+for c in commits[:10]:
+    msg=(c.get("message") or "").splitlines()[0]
+    sha=(c.get("id") or "")[:7]
+    url=c.get("url") or ""
+    lines.append(f"• `{sha}` {msg}")
+print("\n".join(lines))
+print(len(commits))
+PY
+)"
+          COMMIT_LINES="$(echo "$COMMITS" | sed '$d')"
+          COMMIT_COUNT="$(echo "$COMMITS" | tail -n1)"
+
+          # Fallback compare URL
+          if [ -z "$COMPARE_URL" ]; then
+            COMPARE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${BEFORE}...${AFTER}"
+          fi
+
+          {
+            echo "repo=$REPO"
+            echo "branch=$BRANCH"
+            echo "actor=$ACTOR"
+            echo "short_sha=$SHORT_SHA"
+            echo "commit_url=$COMMIT_URL"
+            echo "compare_url=$COMPARE_URL"
+            echo "commit_count=$COMMIT_COUNT"
+            echo "commit_lines<<EOF"
+            echo "$COMMIT_LINES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post push embed to Discord (green)
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ steps.summary.outputs.repo }}
+          BRANCH: ${{ steps.summary.outputs.branch }}
+          ACTOR: ${{ steps.summary.outputs.actor }}
+          SHORT_SHA: ${{ steps.summary.outputs.short_sha }}
+          COMMIT_URL: ${{ steps.summary.outputs.commit_url }}
+          COMPARE_URL: ${{ steps.summary.outputs.compare_url }}
+          COMMIT_COUNT: ${{ steps.summary.outputs.commit_count }}
+          COMMIT_LINES: ${{ steps.summary.outputs.commit_lines }}
+        run: |
+          set -euo pipefail
+
+          # Catppuccin Mocha-ish colors
+          # green = "Green" (#a6e3a1) ; red = "Red" (#f38ba8) ; lavender = "Lavender" (#b4befe)
+          COLOR_DEC=$((16#a6e3a1))
+
+          TITLE="🟢 Push to ${BRANCH}"
+          DESC="**${REPO}**\n${COMMIT_COUNT} commit(s) by **${ACTOR}**"
+
+          # Discord limits: embed description max 4096 chars
+          BODY="${DESC}\n\n${COMMIT_LINES}"
+          BODY="$(python3 - <<'PY'
+import os
+s=os.environ["BODY"]
+print(s[:3900] + ("\n…(truncated)" if len(s)>3900 else ""))
+PY
+)"
+
+          PAYLOAD="$(python3 - <<'PY'
+import json, os
+payload = {
+  "embeds": [{
+    "title": os.environ["TITLE"],
+    "description": os.environ["BODY"],
+    "color": int(os.environ["COLOR_DEC"]),
+    "url": os.environ["COMPARE_URL"],
+    "footer": {"text": f"{os.environ['REPO']} • {os.environ['SHORT_SHA']}"},
+  }],
+  "components": [{
+    "type": 1,
+    "components": [
+      {"type": 2, "style": 5, "label": "View commit", "url": os.environ["COMMIT_URL"]},
+      {"type": 2, "style": 5, "label": "Compare", "url": os.environ["COMPARE_URL"]}
+    ]
+  }]
+}
+print(json.dumps(payload))
+PY
+)"
+          curl -fsS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK_URL"
+
+  ci_result_to_discord:
+    name: CI result -> Discord (red on failure)
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post CI failure embed to Discord
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(echo "$SHA" | cut -c1-7)"
+          COLOR_DEC=$((16#f38ba8))  # Catppuccin Mocha Red
+
+          TITLE="🔴 ${WORKFLOW} failed"
+          DESC="**${REPO}**\nBranch: **${BRANCH}**\nBy: **${ACTOR}**\nConclusion: **${CONCLUSION}**\nSHA: `${SHORT_SHA}`"
+
+          PAYLOAD="$(python3 - <<'PY'
+import json, os
+payload = {
+  "embeds": [{
+    "title": os.environ["TITLE"],
+    "description": os.environ["DESC"],
+    "color": int(os.environ["COLOR_DEC"]),
+    "url": os.environ["RUN_URL"],
+    "footer": {"text": "Build failed • investigate the logs"}
+  }],
+  "components": [{
+    "type": 1,
+    "components": [
+      {"type": 2, "style": 5, "label": "Open run", "url": os.environ["RUN_URL"]}
+    ]
+  }]
+}
+print(json.dumps(payload))
+PY
+)"
+          curl -fsS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK_URL"
+
+  release_to_discord:
+    name: Release -> Discord (lavender)
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post release embed to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          NAME: ${{ github.event.release.name }}
+          URL: ${{ github.event.release.html_url }}
+        run: |
+          set -euo pipefail
+          COLOR_DEC=$((16#b4befe))  # Catppuccin Mocha Lavender
+
+          TITLE="🟣 Release: ${TAG}"
+          DESC="**${REPO}**\n${NAME}"
+
+          PAYLOAD="$(python3 - <<'PY'
+import json, os
+payload = {
+  "embeds": [{
+    "title": os.environ["TITLE"],
+    "description": os.environ["DESC"],
+    "color": int(os.environ["COLOR_DEC"]),
+    "url": os.environ["URL"]
+  }],
+  "components": [{
+    "type": 1,
+    "components": [
+      {"type": 2, "style": 5, "label": "View release", "url": os.environ["URL"]}
+    ]
+  }]
+}
+print(json.dumps(payload))
+PY
+)"
+          curl -fsS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK_URL"
