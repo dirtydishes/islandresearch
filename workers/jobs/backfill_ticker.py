@@ -4,6 +4,7 @@ from typing import Optional
 from .fetch_filings import fetch_missing_filings
 from .materialize_canonical import run_materialization
 from .parse_filing import parse_filing
+from ..db import list_filings_by_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ def backfill_ticker(ticker: str, limit: int = 24, storage_root: Optional[str] = 
     fetch_result = fetch_missing_filings(ticker, limit=limit, storage_root=storage_root)
     saved = fetch_result.get("saved", [])
     parsed = []
+    parsed_accessions = set()
     for entry in saved:
         accession = entry["accession"]
         cik = fetch_result.get("cik")
@@ -23,6 +25,22 @@ def backfill_ticker(ticker: str, limit: int = 24, storage_root: Optional[str] = 
         if not path:
             continue
         parsed.append(parse_filing(accession, cik, ticker, path))
+        parsed_accessions.add(accession)
+
+    if len(parsed) < limit:
+        existing_filings = list_filings_by_ticker(ticker, limit=limit)
+        for filing in existing_filings:
+            accession = filing.get("accession")
+            if not accession or accession in parsed_accessions:
+                continue
+            cik = filing.get("cik") or fetch_result.get("cik")
+            path = filing.get("path")
+            if not path:
+                continue
+            parsed.append(parse_filing(accession, cik, ticker, path))
+            parsed_accessions.add(accession)
+            if len(parsed) >= limit:
+                break
     inserted = run_materialization(ticker)
     dropped_total = sum(item.get("dropped", 0) for item in parsed)
     result = {

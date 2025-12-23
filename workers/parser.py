@@ -16,6 +16,23 @@ ALLOWED_CONTEXT_AXES = {
     "us-gaap:StatementClassOfStockAxis",
     "us-gaap:StatementEquityComponentsAxis",
     "dei:LegalEntityAxis",
+    "srt:ConsolidationItemsAxis",
+}
+ALLOWED_AXIS_MEMBERS = {
+    "srt:ConsolidationItemsAxis": {
+        "us-gaap:CorporateNonSegmentMember",
+        "us-gaap:ConsolidatedEntitiesMember",
+        "us-gaap:ConsolidatedEntityMember",
+        "srt:ConsolidatedGroupMember",
+    },
+    "us-gaap:StatementClassOfStockAxis": {"us-gaap:CommonStockMember"},
+    "us-gaap:StatementEquityComponentsAxis": {
+        "us-gaap:AccumulatedOtherComprehensiveIncomeMember",
+        "us-gaap:CommonStockMember",
+        "us-gaap:CommonStockIncludingAdditionalPaidInCapitalMember",
+        "us-gaap:RetainedEarningsMember",
+        "us-gaap:TreasuryStockMember",
+    },
 }
 ANCHOR_LINE_ITEMS = {
     "income_statement": {"revenue", "net_income", "gross_profit", "operating_income"},
@@ -66,11 +83,59 @@ def _normalize_unit(raw: Optional[str]) -> str:
     lowered = cleaned.lower()
     if lowered in {"usd", "dollar"}:
         return "USD"
-    if lowered in {"usdpershare", "usd/share", "usdperstock", "usdperstockunit"}:
+    if lowered in {
+        "usdpershare",
+        "usd/share",
+        "usd/shares",
+        "usdperstock",
+        "usdperstockunit",
+        "usdper",
+        "usdper_share",
+        "usdper-share",
+    }:
         return "USDPERSHARE"
     if lowered in {"share", "shares"}:
         return "SHARES"
     return cleaned.upper()
+
+
+def _context_is_allowed(dimensions: List[Tuple[str, str]]) -> bool:
+    if not dimensions:
+        return True
+    for axis, member in dimensions:
+        if axis not in ALLOWED_CONTEXT_AXES:
+            return False
+        allowed_members = ALLOWED_AXIS_MEMBERS.get(axis)
+        if allowed_members and member not in allowed_members:
+            return False
+    return True
+
+
+def _build_unit_map(soup: BeautifulSoup) -> Dict[str, str]:
+    unit_map: Dict[str, str] = {}
+    for unit in soup.find_all(lambda t: t.name and t.name.lower().endswith("unit")):
+        unit_id = unit.get("id")
+        if not unit_id:
+            continue
+        divide = unit.find(lambda t: t.name and t.name.lower().endswith("divide"))
+        if divide:
+            numerator = divide.find(lambda t: t.name and t.name.lower().endswith("unitnumerator"))
+            denominator = divide.find(lambda t: t.name and t.name.lower().endswith("unitdenominator"))
+            num_measure = numerator.find(lambda t: t.name and t.name.lower().endswith("measure")) if numerator else None
+            den_measure = denominator.find(lambda t: t.name and t.name.lower().endswith("measure")) if denominator else None
+            num_unit = _normalize_unit(num_measure.get_text(strip=True) if num_measure else None)
+            den_unit = _normalize_unit(den_measure.get_text(strip=True) if den_measure else None)
+            if num_unit == "USD" and den_unit == "SHARES":
+                unit_map[unit_id] = "USDPERSHARE"
+            elif num_unit and den_unit:
+                unit_map[unit_id] = f"{num_unit}/{den_unit}"
+            else:
+                unit_map[unit_id] = _normalize_unit(unit_id)
+            continue
+        measure = unit.find(lambda t: t.name and t.name.lower().endswith("measure"))
+        if measure:
+            unit_map[unit_id] = _normalize_unit(measure.get_text(strip=True))
+    return unit_map
 
 
 def parse_simple_table(html_content: bytes) -> List[Dict[str, Optional[str]]]:
@@ -95,6 +160,7 @@ def parse_simple_table(html_content: bytes) -> List[Dict[str, Optional[str]]]:
 def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
     """Extract a small set of inline XBRL facts by tag name, including period info."""
     soup = BeautifulSoup(html_content, "html.parser")
+    unit_map = _build_unit_map(soup)
 
     # Build context map to resolve period_end and type.
     contexts: Dict[str, Dict[str, Optional[str]]] = {}
@@ -108,8 +174,15 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
             continue
         segment = ctx.find(lambda t: t.name and t.name.lower().endswith("segment"))
         if segment:
-            dims = {m.get("dimension") for m in segment.find_all(lambda t: t.name and t.name.lower().endswith("explicitmember"))}
-            if any(dim not in ALLOWED_CONTEXT_AXES for dim in dims):
+            if segment.find(lambda t: t.name and t.name.lower().endswith("typedmember")):
+                continue
+            dims = []
+            for member in segment.find_all(lambda t: t.name and t.name.lower().endswith("explicitmember")):
+                axis = member.get("dimension")
+                member_value = member.get_text(strip=True)
+                if axis and member_value:
+                    dims.append((axis, member_value))
+            if not _context_is_allowed(dims):
                 continue
         period = ctx.find(lambda t: t.name and t.name.lower().endswith("period"))
         if not period:
@@ -163,7 +236,8 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         period_end = ctx_data.get("period_end") or fallback_period_end
         period_start = ctx_data.get("start")
         period_type = ctx_data.get("period_type") or fallback_period_type or "unknown"
-        unit = _normalize_unit(tag.get("unitref") or tag.get("unit") or "USD")
+        raw_unit = tag.get("unitref") or tag.get("unit") or "USD"
+        unit = unit_map.get(raw_unit, _normalize_unit(raw_unit))
         for line_item, statement in mappings:
             anchors = anchor_contexts.get(statement, set())
             if anchors and line_item not in ANCHOR_LINE_ITEMS.get(statement, set()):

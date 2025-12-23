@@ -41,7 +41,10 @@ def _normalize_period_type(statement: Optional[str], period_type: Optional[str])
 def _normalize_unit(unit: Optional[str]) -> str:
     if not unit:
         return "USD"
-    return unit.strip().upper()
+    cleaned = unit.strip().upper()
+    if cleaned in {"USD/SHARES", "USD/SHARE", "USD PER SHARE"}:
+        return "USDPERSHARE"
+    return cleaned
 
 
 def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end: Optional[Any] = None) -> List[Dict[str, Any]]:

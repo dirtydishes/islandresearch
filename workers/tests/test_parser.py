@@ -55,6 +55,35 @@ class ParseInlineXBRLTests(unittest.TestCase):
         self.assertEqual(shares["period_type"], "duration")
         self.assertEqual(shares["value"], 50.0)
 
+
+    def test_normalizes_unit_ref_from_unit_definitions(self) -> None:
+        sample = b"""
+        <html>
+          <body>
+            <xbrli:unit id="usdPerShare">
+              <xbrli:divide>
+                <xbrli:unitNumerator><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unitNumerator>
+                <xbrli:unitDenominator><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unitDenominator>
+              </xbrli:divide>
+            </xbrli:unit>
+            <xbrli:context id="D2023Q2">
+              <xbrli:entity>
+                <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000000</xbrli:identifier>
+              </xbrli:entity>
+              <xbrli:period>
+                <xbrli:startDate>2023-03-27</xbrli:startDate>
+                <xbrli:endDate>2023-06-24</xbrli:endDate>
+              </xbrli:period>
+            </xbrli:context>
+            <ix:nonfraction name="us-gaap:EarningsPerShareDiluted" contextref="D2023Q2" unitref="usdPerShare" decimals="2">1.23</ix:nonfraction>
+          </body>
+        </html>
+        """
+        facts = parse_inline_xbrl(sample)
+        eps = next(f for f in facts if f["line_item"] == "eps_diluted")
+        self.assertEqual(eps["unit"], "USDPERSHARE")
+        self.assertEqual(eps["value"], 1.23)
+
 class ParseRealFilingTests(unittest.TestCase):
     def test_parses_real_primary_html(self) -> None:
         from pathlib import Path
@@ -148,8 +177,28 @@ class ParseContextsWithSegmentsTests(unittest.TestCase):
               </xbrli:entity>
               <xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period>
             </xbrli:context>
+            <xbrli:context id="ctxConsolidated">
+              <xbrli:entity>
+                <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000000</xbrli:identifier>
+                <xbrli:segment>
+                  <xbrldi:explicitMember dimension="srt:ConsolidationItemsAxis">us-gaap:CorporateNonSegmentMember</xbrldi:explicitMember>
+                </xbrli:segment>
+              </xbrli:entity>
+              <xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period>
+            </xbrli:context>
+            <xbrli:context id="ctxSegmented">
+              <xbrli:entity>
+                <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000000</xbrli:identifier>
+                <xbrli:segment>
+                  <xbrldi:explicitMember dimension="srt:ConsolidationItemsAxis">us-gaap:OperatingSegmentsMember</xbrldi:explicitMember>
+                </xbrli:segment>
+              </xbrli:entity>
+              <xbrli:period><xbrli:instant>2023-12-31</xbrli:instant></xbrli:period>
+            </xbrli:context>
             <ix:nonFraction name="us-gaap:CommonStockSharesOutstanding" contextRef="ctxAllowed" unitRef="shares" decimals="0">1,000</ix:nonFraction>
             <ix:nonFraction name="us-gaap:CashAndCashEquivalentsAtCarryingValue" contextRef="ctxBlocked" unitRef="usd" decimals="0">50</ix:nonFraction>
+            <ix:nonFraction name="us-gaap:CashAndCashEquivalentsAtCarryingValue" contextRef="ctxConsolidated" unitRef="usd" decimals="0">75</ix:nonFraction>
+            <ix:nonFraction name="us-gaap:CashAndCashEquivalentsAtCarryingValue" contextRef="ctxSegmented" unitRef="usd" decimals="0">125</ix:nonFraction>
           </body>
         </html>
         """
@@ -159,7 +208,8 @@ class ParseContextsWithSegmentsTests(unittest.TestCase):
         self.assertEqual(len(shares), 1)
         self.assertEqual(shares[0]["period_end"], "2023-12-31")
         self.assertEqual(shares[0]["unit"], "SHARES")
-        self.assertEqual(len(cash), 0, "Disallowed dimension contexts should be dropped")
+        self.assertEqual(len(cash), 1, "Only consolidated cash context should remain")
+        self.assertEqual(cash[0]["value"], 75.0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,3 +114,21 @@ def list_filing_accessions(ticker: str) -> List[str]:
             )
             rows = cur.fetchall()
     return [row["accession"] for row in rows]
+
+
+def list_filings_by_ticker(ticker: str, limit: int = 8) -> List[Dict[str, Any]]:
+    ensure_schema()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ticker, cik, accession, form, filed_at, path, submissions_path, created_at
+                FROM filings
+                WHERE ticker = %s
+                ORDER BY filed_at DESC NULLS LAST, created_at DESC
+                LIMIT %s
+                """,
+                (ticker.upper(), limit),
+            )
+            rows = cur.fetchall()
+    return rows
