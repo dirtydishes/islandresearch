@@ -610,6 +610,9 @@ export default function Home({ ticker, statements, summary, error }: Props) {
           <div className="card">
             <h2>Model</h2>
             <p>Driver-based 3-statement forecast with valuation and scenarios.</p>
+            <a className="link" href={`/model?ticker=${ticker}`}>
+              Open model view
+            </a>
           </div>
           <div className="card">
             <h2>Audit Trail</h2>

@@ -1,7 +1,7 @@
 import os
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +15,7 @@ from .db import get_filing_by_accession, list_filings_by_ticker
 from .ticker_map import get_cik_for_ticker, get_coverage_status, list_supported_tickers
 from .facts import list_facts_by_ticker
 from .canonical import list_canonical_by_ticker
+from .model import get_model
 from .statements import get_statements_for_ticker
 from .summary import get_summary
 
@@ -118,6 +119,34 @@ class CanonicalFact(BaseModel):
     unit: str | None
     source_fact_id: int | None
     created_at: datetime | None
+
+
+class ModelValue(BaseModel):
+    value: float | None
+    unit: str | None
+    source: Optional[Dict[str, Any]] = None
+
+
+class ModelPeriod(BaseModel):
+    period_end: str
+    values: Dict[str, ModelValue]
+    scenario: Optional[str] = None
+    period_index: Optional[int] = None
+    assumptions: Optional[Dict[str, Optional[float]]] = None
+
+
+class ModelStatement(BaseModel):
+    actuals: List[ModelPeriod]
+    forecast: List[ModelPeriod]
+
+
+class ModelResponse(BaseModel):
+    ticker: str
+    as_of: Optional[str] = None
+    drivers: Dict[str, Dict]
+    scenarios: List[str]
+    statements: Dict[str, ModelStatement]
+    forecast_summary: Optional[Dict[str, Any]] = None
 
 
 class StatementLine(BaseModel):
@@ -298,6 +327,15 @@ def summary(ticker: str) -> SummaryResponse:
         data = get_summary(ticker)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load summary for {ticker}: {exc}")
+    return data
+
+
+@app.get("/model/{ticker}", response_model=ModelResponse, tags=["model"])
+def model(ticker: str, actuals_limit: int = 4) -> ModelResponse:
+    try:
+        data = get_model(ticker, actuals_limit=actuals_limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load model for {ticker}: {exc}")
     return data
 
 

@@ -81,6 +81,12 @@ body {
   font-size: 14px;
 }
 
+.link {
+  color: #7aa2ff;
+  text-decoration: underline;
+  font-size: 14px;
+}
+
 .grid {
   display: grid;
   gap: 16px;
@@ -326,6 +332,53 @@ body {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+}
+
+.model-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.model-table th,
+.model-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: right;
+  vertical-align: top;
+}
+
+.model-table th:first-child,
+.model-table td:first-child {
+  text-align: left;
+  color: #e8ecf5;
+}
+
+.model-table th {
+  color: #c8cdd7;
+  font-weight: 600;
+}
+
+.model-col-forecast {
+  color: #c5d6ff;
+}
+
+.model-col-actual {
+  color: #f4f6fb;
+}
+
+.model-pill {
+  margin-left: 6px;
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.model-range {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #c8cdd7;
+  margin-bottom: 8px;
 }
 
 .statement {
