@@ -154,6 +154,39 @@ class ParseRealFilingTests(unittest.TestCase):
         self.assertTrue(any(v is not None for v in cfo_values))
 
 
+class ParseStatementParityTests(unittest.TestCase):
+    def _assert_core_line_items(self, facts, ticker: str) -> None:
+        line_items = {f["line_item"] for f in facts}
+        for required in ("revenue", "operating_income", "net_income"):
+            self.assertIn(required, line_items, f"{ticker} missing income statement core line item: {required}")
+
+        self.assertIn("assets", line_items, f"{ticker} missing balance sheet core line item: assets")
+        self.assertIn("equity", line_items, f"{ticker} missing balance sheet core line item: equity")
+        self.assertIn("cash", line_items, f"{ticker} missing balance sheet core line item: cash")
+        liabilities_ok = (
+            "liabilities" in line_items
+            or "liabilities_equity" in line_items
+            or ("liabilities_current" in line_items and "liabilities_noncurrent" in line_items)
+        )
+        self.assertTrue(liabilities_ok, f"{ticker} missing balance sheet liabilities coverage")
+
+        for required in ("cfo", "cfi", "cff", "capex", "change_in_cash"):
+            self.assertIn(required, line_items, f"{ticker} missing cash flow core line item: {required}")
+
+    def test_statement_core_line_items_for_fixtures(self) -> None:
+        from pathlib import Path
+
+        fixtures = {
+            "AAPL": Path("storage/raw/0000320193/000032019325000079_primary.html"),
+            "AMZN": Path("storage/raw/0001018724/000101872425000123_primary.html"),
+            "NVDA": Path("storage/raw/0001045810/000104581025000230_primary.html"),
+        }
+        for ticker, path in fixtures.items():
+            self.assertTrue(path.is_file(), f"Fixture missing for {ticker}: {path}")
+            facts = parse_inline_xbrl(path.read_bytes())
+            self._assert_core_line_items(facts, ticker)
+
+
 class ParseContextsWithSegmentsTests(unittest.TestCase):
     def test_keeps_allowed_segment_dimensions_and_drops_disallowed(self) -> None:
         sample = b"""
