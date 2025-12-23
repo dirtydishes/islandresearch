@@ -420,7 +420,12 @@ def _collect_tie_violations(aggregated: List[Dict[str, Any]], tolerance: Optiona
         assets = bs.get("assets")
         liabilities = bs.get("liabilities")
         equity = bs.get("equity")
-        if assets is not None and liabilities is not None and equity is not None:
+        liabilities_equity = bs.get("liabilities_equity")
+        if assets is not None and liabilities_equity is not None:
+            delta = assets - liabilities_equity
+            if abs(delta) > tol:
+                violations.append(f"Balance sheet tie off for {period}: {delta}")
+        elif assets is not None and liabilities is not None and equity is not None:
             delta = assets - (liabilities + equity)
             if abs(delta) > tol:
                 violations.append(f"Balance sheet tie off for {period}: {delta}")

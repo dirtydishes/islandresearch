@@ -120,19 +120,36 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
 
 
 class TieCheckTests(unittest.TestCase):
-    def test_detects_balance_sheet_and_cash_flow_violations(self) -> None:
+    def test_balance_sheet_prefers_liabilities_equity(self) -> None:
         period = date(2024, 12, 31)
         aggregated = [
             {"period_end": period, "statement": "balance_sheet", "line_item": "assets", "value": 100.0},
             {"period_end": period, "statement": "balance_sheet", "line_item": "liabilities", "value": 60.0},
             {"period_end": period, "statement": "balance_sheet", "line_item": "equity", "value": 30.0},
+            {"period_end": period, "statement": "balance_sheet", "line_item": "liabilities_equity", "value": 100.0},
+        ]
+        violations = log_tie_checks(aggregated, strict=False)
+        self.assertFalse(any("Balance sheet tie off" in msg for msg in violations))
+
+    def test_balance_sheet_fallbacks_to_liabilities_and_equity(self) -> None:
+        period = date(2024, 12, 31)
+        aggregated = [
+            {"period_end": period, "statement": "balance_sheet", "line_item": "assets", "value": 100.0},
+            {"period_end": period, "statement": "balance_sheet", "line_item": "liabilities", "value": 60.0},
+            {"period_end": period, "statement": "balance_sheet", "line_item": "equity", "value": 30.0},
+        ]
+        violations = log_tie_checks(aggregated, strict=False)
+        self.assertTrue(any("Balance sheet tie off" in msg for msg in violations))
+
+    def test_detects_cash_flow_violation(self) -> None:
+        period = date(2024, 12, 31)
+        aggregated = [
             {"period_end": period, "statement": "cash_flow", "line_item": "cfo", "value": 10.0},
             {"period_end": period, "statement": "cash_flow", "line_item": "cfi", "value": -3.0},
             {"period_end": period, "statement": "cash_flow", "line_item": "cff", "value": -2.0},
             {"period_end": period, "statement": "cash_flow", "line_item": "change_in_cash", "value": 4.0},
         ]
         violations = log_tie_checks(aggregated, strict=False)
-        self.assertTrue(any("Balance sheet tie off" in msg for msg in violations))
         self.assertTrue(any("Cash flow tie off" in msg for msg in violations))
 
     def test_prefers_shorter_duration_for_income_statement(self) -> None:
