@@ -204,6 +204,13 @@ class BacktestResponse(BaseModel):
     backtest_time_travel: dict | None = None
 
 
+class QualityResponse(BaseModel):
+    ticker: str
+    coverage: dict | None = None
+    ties: dict | None = None
+    backtest_time_travel: dict | None = None
+
+
 @app.get("/health", tags=["health"])
 def health() -> dict:
     """Lightweight readiness probe."""
@@ -338,6 +345,20 @@ def summary(ticker: str) -> SummaryResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load summary for {ticker}: {exc}")
     return data
+
+
+@app.get("/quality/{ticker}", response_model=QualityResponse, tags=["summary"])
+def quality(ticker: str) -> QualityResponse:
+    try:
+        data = get_summary(ticker)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load quality for {ticker}: {exc}")
+    return QualityResponse(
+        ticker=data.get("ticker", ticker.upper()),
+        coverage=data.get("coverage"),
+        ties=data.get("ties"),
+        backtest_time_travel=data.get("backtest_time_travel"),
+    )
 
 
 @app.get("/backtest/{ticker}", response_model=BacktestResponse, tags=["backtest"])

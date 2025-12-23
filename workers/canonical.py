@@ -420,6 +420,29 @@ def _add_cash_flow_residuals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             derived.append(row)
             line_map[line_item] = row
 
+        wc_components = [
+            "change_accounts_receivable",
+            "change_inventory",
+            "change_prepaid_expenses",
+            "change_other_assets",
+            "change_accounts_payable",
+            "change_accrued_expenses",
+            "change_deferred_revenue",
+            "change_other_liabilities",
+        ]
+
+        if "change_working_capital" not in line_map:
+            total = 0.0
+            has_component = False
+            for item in wc_components:
+                val = _value(item)
+                if val is None:
+                    continue
+                total += val
+                has_component = True
+            if has_component:
+                _append("change_working_capital", float(total))
+
         cfo = _value("cfo")
         cfi = _value("cfi")
         cff = _value("cff")

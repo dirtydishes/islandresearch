@@ -454,6 +454,81 @@ class TieCheckTests(unittest.TestCase):
         liabilities = next(r for r in enriched if r["line_item"] == "liabilities")
         self.assertAlmostEqual(liabilities["value"], 70.0)
 
+    def test_derives_change_working_capital_from_components(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 10.0,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_accounts_receivable",
+                "value": -5.0,
+                "unit": "USD",
+            },
+            {
+                "id": 3,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_inventory",
+                "value": -2.0,
+                "unit": "USD",
+            },
+            {
+                "id": 4,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_accounts_payable",
+                "value": 4.0,
+                "unit": "USD",
+            },
+            {
+                "id": 5,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 1, 1),
+                "period_end": date(2024, 3, 31),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_accrued_expenses",
+                "value": 1.0,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _add_cash_flow_residuals
+
+        enriched = _add_cash_flow_residuals(aggregated)
+        wc_row = next(r for r in enriched if r.get("line_item") == "change_working_capital")
+        self.assertAlmostEqual(wc_row["value"], -2.0)
+
 
 class CanonicalFromRealFilingTests(unittest.TestCase):
     def test_aggregates_real_filing_facts(self) -> None:

@@ -44,9 +44,26 @@ type ModelResponse = {
   backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
 };
 
+type QualityResponse = {
+  ticker: string;
+  coverage?: Record<
+    string,
+    {
+      period_end: string;
+      total_found: number;
+      total_expected: number;
+      by_statement: Record<string, { found: number; expected: number }>;
+      missing?: Record<string, string[]>;
+    }
+  >;
+  ties?: Record<string, { period_end: string; bs_tie: number | null; cf_tie: number | null }>;
+  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
+};
+
 type Props = {
   ticker: string;
   model?: ModelResponse | null;
+  quality?: QualityResponse | null;
   actualsLimit: number;
   error?: string | null;
 };
@@ -110,6 +127,14 @@ const STATEMENT_DISPLAY_ORDER: Record<string, string[]> = {
     "net_income",
     "depreciation_amortization",
     "stock_compensation",
+    "change_accounts_receivable",
+    "change_inventory",
+    "change_prepaid_expenses",
+    "change_other_assets",
+    "change_accounts_payable",
+    "change_accrued_expenses",
+    "change_deferred_revenue",
+    "change_other_liabilities",
     "change_working_capital",
     "cfo",
     "capex",
@@ -132,6 +157,14 @@ const LABEL_MAP: Record<string, string> = {
   cfi: "Cash Flow From Investing",
   cff: "Cash Flow From Financing",
   fcf: "Free Cash Flow",
+  change_accounts_receivable: "Change in A/R",
+  change_inventory: "Change in Inventory",
+  change_prepaid_expenses: "Change in Prepaids",
+  change_other_assets: "Change in Other Assets",
+  change_accounts_payable: "Change in A/P",
+  change_accrued_expenses: "Change in Accruals",
+  change_deferred_revenue: "Change in Deferred Rev",
+  change_other_liabilities: "Change in Other Liab",
   ppe: "Property, Plant & Equipment",
   r_and_d: "R&D",
   sga: "SG&A",
@@ -148,18 +181,25 @@ export async function getServerSideProps(ctx: any) {
   const allowedLimits = [2, 4, 6, 8, 12];
   const actualsLimit = allowedLimits.includes(limitParam) ? limitParam : 4;
   let model: ModelResponse | null = null;
+  let quality: QualityResponse | null = null;
   let error: string | undefined;
   try {
-    const res = await fetch(`${apiBase}/model/${ticker}?actuals_limit=${actualsLimit}`);
-    if (res.ok) {
-      model = await res.json();
+    const [modelRes, qualityRes] = await Promise.all([
+      fetch(`${apiBase}/model/${ticker}?actuals_limit=${actualsLimit}`),
+      fetch(`${apiBase}/quality/${ticker}`),
+    ]);
+    if (modelRes.ok) {
+      model = await modelRes.json();
     } else {
-      error = `Model not available (${res.status})`;
+      error = `Model not available (${modelRes.status})`;
+    }
+    if (qualityRes.ok) {
+      quality = await qualityRes.json();
     }
   } catch (err: any) {
     error = err?.message || "Failed to load model";
   }
-  return { props: { ticker, model, actualsLimit, error: error || null } };
+  return { props: { ticker, model, quality, actualsLimit, error: error || null } };
 }
 
 function formatCurrency(value: number | null, opts: { withSign?: boolean } = {}) {
@@ -261,7 +301,7 @@ function sortLineItems(statement: string, items: string[]) {
   });
 }
 
-export default function ModelPage({ ticker, model, actualsLimit, error }: Props) {
+export default function ModelPage({ ticker, model, quality, actualsLimit, error }: Props) {
   const router = useRouter();
   const [input, setInput] = useState(ticker);
   const scenarios = model?.scenarios && model.scenarios.length > 0 ? model.scenarios : ["base"];
@@ -275,7 +315,8 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
 
   const drivers = model?.drivers || {};
   const statements = model?.statements || {};
-  const coverageMap = model?.coverage || {};
+  const coverageMap = quality?.coverage || model?.coverage || {};
+  const tiesMap = quality?.ties || {};
   const coverageKey =
     model?.as_of && coverageMap[model.as_of] ? model.as_of : Object.keys(coverageMap)[0] || null;
   const coverage = coverageKey ? coverageMap[coverageKey] : null;
@@ -284,7 +325,38 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
     ? Object.values(missing).reduce((sum, items) => sum + (items?.length ?? 0), 0)
     : 0;
   const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
-  const timeTravel = model?.backtest_time_travel || null;
+  const timeTravel = quality?.backtest_time_travel || model?.backtest_time_travel || null;
+  const qualityPeriods = Object.keys(coverageMap || {}).sort().reverse().slice(0, 6);
+  const qualityRows = qualityPeriods.map((period) => {
+    const periodCoverage = coverageMap[period];
+    const periodMissing = periodCoverage?.missing || {};
+    const missingCount = Object.values(periodMissing).reduce((sum, items) => sum + (items?.length ?? 0), 0);
+    const coveragePct =
+      periodCoverage && periodCoverage.total_expected
+        ? periodCoverage.total_found / periodCoverage.total_expected
+        : null;
+    const ties = tiesMap?.[period] || null;
+    const bsTie = ties?.bs_tie ?? null;
+    const cfTie = ties?.cf_tie ?? null;
+    const coverageTone = toneForCoverage(coveragePct);
+    let tieTone = "success";
+    if (bsTie !== null && Math.abs(bsTie) > 1e-2) {
+      tieTone = "danger";
+    } else if (cfTie !== null && Math.abs(cfTie) > 1e-2) {
+      tieTone = "warn";
+    }
+    const tieLabel = tieTone === "danger" ? "BS off" : tieTone === "warn" ? "CF off" : "OK";
+    return {
+      period,
+      coveragePct,
+      coverageTone,
+      missingCount,
+      tieTone,
+      tieLabel,
+      bsTie,
+      cfTie,
+    };
+  });
   const coveragePct =
     coverage && coverage.total_expected ? coverage.total_found / coverage.total_expected : null;
   const coveragePercentLabel = coveragePct === null ? "—" : formatPercent(coveragePct);
@@ -568,6 +640,39 @@ export default function ModelPage({ ticker, model, actualsLimit, error }: Props)
                 </>
               ) : (
                 <p className="muted">Coverage not available.</p>
+              )}
+            </div>
+            <div className="card">
+              <div className="card-header">
+                <h2>Quality Timeline</h2>
+                <span className="pill">Per period</span>
+              </div>
+              {qualityRows.length > 0 ? (
+                <div className="quality-timeline">
+                  {qualityRows.map((row) => {
+                    const coverageLabel = row.coveragePct === null ? "—" : formatPercent(row.coveragePct);
+                    const coverageClass = row.coverageTone ? ` ${row.coverageTone}` : "";
+                    const missingClass = row.missingCount ? "warn" : "success";
+                    const tieTooltip = `BS tie: ${formatCurrency(row.bsTie)} • CF tie: ${formatCurrency(row.cfTie)}`;
+                    return (
+                      <div key={row.period} className="quality-row">
+                        <div>
+                          <div className="quality-period">{row.period}</div>
+                          <div className="muted">Coverage & ties</div>
+                        </div>
+                        <div className="quality-badges">
+                          <span className={`pill${coverageClass}`}>{coverageLabel}</span>
+                          <span className={`pill ${missingClass}`}>{row.missingCount} missing</span>
+                          <span className={`pill ${row.tieTone}`} data-tooltip={tieTooltip} aria-label={tieTooltip}>
+                            {row.tieLabel}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="muted">No quality timeline available.</p>
               )}
             </div>
           </section>

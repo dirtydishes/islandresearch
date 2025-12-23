@@ -15,6 +15,7 @@ class TagMapTests(unittest.TestCase):
             "us-gaap:IncomeLossFromOperations",
             "us-gaap:ProvisionForIncomeTaxes",
             "us-gaap:NetIncomeLossAttributableToParent",
+            "us-gaap:NetIncomeLossAvailableToCommonStockholders",
             "us-gaap:AccountsReceivableNet",
             "us-gaap:DeferredRevenueCurrent",
             "us-gaap:AccruedLiabilitiesAndOtherCurrent",
@@ -38,6 +39,8 @@ class TagMapTests(unittest.TestCase):
             "us-gaap:DividendsPaid",
             "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
             "us-gaap:PaymentsForRepurchaseOfEquity",
+            "us-gaap:IncreaseDecreaseInAccountsReceivable",
+            "us-gaap:IncreaseDecreaseInAccountsPayable",
             "us-gaap:TreasuryStockCommonValue",
         ]
         for tag in expected:

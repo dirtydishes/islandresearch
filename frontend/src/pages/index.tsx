@@ -1018,6 +1018,14 @@ const LABEL_MAP: Record<string, string> = {
   sga: "SG&A",
   shares_basic: "Shares Outstanding (Basic)",
   shares_diluted: "Shares Outstanding (Diluted)",
+  change_accounts_receivable: "Change in A/R",
+  change_inventory: "Change in Inventory",
+  change_prepaid_expenses: "Change in Prepaids",
+  change_other_assets: "Change in Other Assets",
+  change_accounts_payable: "Change in A/P",
+  change_accrued_expenses: "Change in Accruals",
+  change_deferred_revenue: "Change in Deferred Rev",
+  change_other_liabilities: "Change in Other Liab",
 };
 
 function humanLabel(key: string | null | undefined): string {
