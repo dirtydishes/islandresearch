@@ -529,6 +529,56 @@ class TieCheckTests(unittest.TestCase):
         wc_row = next(r for r in enriched if r.get("line_item") == "change_working_capital")
         self.assertAlmostEqual(wc_row["value"], -2.0)
 
+    def test_aligns_change_in_cash_to_cfo_start(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2025, 7, 1),
+                "period_end": date(2025, 9, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 10.0,
+                "unit": "USD",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2024, 10, 1),
+                "period_end": date(2025, 9, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_in_cash",
+                "value": 5.0,
+                "unit": "USD",
+            },
+            {
+                "id": 3,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "acc",
+                "period_start": date(2025, 7, 1),
+                "period_end": date(2025, 9, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_in_cash",
+                "value": 8.0,
+                "unit": "USD",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        from workers.canonical import _align_cash_flow_starts
+
+        aligned = _align_cash_flow_starts(aggregated, rows)
+        change_row = next(r for r in aligned if r.get("line_item") == "change_in_cash")
+        self.assertEqual(change_row["period_start"], date(2025, 7, 1))
+        self.assertAlmostEqual(change_row["value"], 8.0)
+
 
 class CanonicalFromRealFilingTests(unittest.TestCase):
     def test_aggregates_real_filing_facts(self) -> None:

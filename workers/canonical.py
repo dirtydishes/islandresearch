@@ -372,6 +372,83 @@ def _add_income_statement_derivations(rows: List[Dict[str, Any]]) -> List[Dict[s
     return sorted(combined, key=lambda x: (x.get("period_end"), x.get("statement"), x.get("line_item")))
 
 
+def _align_cash_flow_starts(
+    rows: List[Dict[str, Any]], fact_rows: Iterable[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Align change_in_cash to the same period_start as CFO when multiple spans exist.
+    """
+    if not rows:
+        return rows
+
+    by_period_unit: Dict[Tuple[Any, str], Dict[str, Dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("statement") != "cash_flow":
+            continue
+        period_end = row.get("period_end")
+        unit = row.get("unit")
+        if period_end is None or unit is None:
+            continue
+        by_period_unit.setdefault((period_end, unit), {})[row.get("line_item")] = row
+
+    candidates: Dict[Tuple[Any, str], List[Dict[str, Any]]] = {}
+    for fact in fact_rows:
+        if fact.get("statement") != "cash_flow" or fact.get("line_item") != "change_in_cash":
+            continue
+        if fact.get("value") is None or fact.get("period_end") is None:
+            continue
+        unit = _normalize_unit(fact.get("unit"))
+        key = (fact.get("period_end"), unit)
+        candidates.setdefault(key, []).append(fact)
+
+    for key, line_map in by_period_unit.items():
+        cfo = line_map.get("cfo")
+        if not cfo:
+            continue
+        anchor_start = cfo.get("period_start")
+        if not anchor_start:
+            continue
+        change_candidates = candidates.get(key, [])
+        if not change_candidates:
+            continue
+        matching = [row for row in change_candidates if row.get("period_start") == anchor_start]
+        if not matching:
+            continue
+        selected = max(
+            matching,
+            key=lambda row: ((row.get("accession") or ""), row.get("id") or 0),
+        )
+        change_row = line_map.get("change_in_cash")
+        if change_row:
+            change_row.update(
+                {
+                    "value": float(selected.get("value")),
+                    "period_start": selected.get("period_start"),
+                    "accession": selected.get("accession") or change_row.get("accession"),
+                    "source_fact_id": selected.get("id"),
+                    "unit": _normalize_unit(selected.get("unit")) or change_row.get("unit"),
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "ticker": cfo.get("ticker"),
+                    "cik": cfo.get("cik"),
+                    "accession": selected.get("accession") or cfo.get("accession"),
+                    "period_start": selected.get("period_start"),
+                    "period_end": cfo.get("period_end"),
+                    "period_type": cfo.get("period_type"),
+                    "statement": "cash_flow",
+                    "line_item": "change_in_cash",
+                    "value": float(selected.get("value")),
+                    "unit": _normalize_unit(selected.get("unit")) or cfo.get("unit"),
+                    "source_fact_id": selected.get("id"),
+                }
+            )
+
+    return rows
+
+
 def _add_cash_flow_residuals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Add derived cash flow line items from statement totals when missing.
@@ -597,6 +674,7 @@ def materialize_canonical_for_ticker(ticker: str, strict_ties: Optional[bool] = 
                 aggregated = aggregate_canonical_rows(fact_rows, default_period_end=default_period_end)
 
             if aggregated:
+                aggregated = _align_cash_flow_starts(aggregated, fact_rows)
                 aggregated = _add_balance_sheet_residuals(aggregated)
                 aggregated = _add_income_statement_derivations(aggregated)
                 aggregated = _add_cash_flow_residuals(aggregated)
