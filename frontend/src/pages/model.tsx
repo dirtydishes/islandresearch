@@ -339,13 +339,18 @@ export default function ModelPage({ ticker, model, quality, actualsLimit, error 
     const bsTie = ties?.bs_tie ?? null;
     const cfTie = ties?.cf_tie ?? null;
     const coverageTone = toneForCoverage(coveragePct);
-    let tieTone = "success";
+    let tieTone: string | null = "success";
+    let tieLabel = "OK";
     if (bsTie !== null && Math.abs(bsTie) > 1e-2) {
       tieTone = "danger";
-    } else if (cfTie !== null && Math.abs(cfTie) > 1e-2) {
+      tieLabel = "BS off";
+    } else if (cfTie === null) {
+      tieTone = null;
+      tieLabel = "n/a";
+    } else if (Math.abs(cfTie) > 1e-2) {
       tieTone = "warn";
+      tieLabel = "CF off";
     }
-    const tieLabel = tieTone === "danger" ? "BS off" : tieTone === "warn" ? "CF off" : "OK";
     return {
       period,
       coveragePct,
@@ -663,7 +668,11 @@ export default function ModelPage({ ticker, model, quality, actualsLimit, error 
                         <div className="quality-badges">
                           <span className={`pill${coverageClass}`}>{coverageLabel}</span>
                           <span className={`pill ${missingClass}`}>{row.missingCount} missing</span>
-                          <span className={`pill ${row.tieTone}`} data-tooltip={tieTooltip} aria-label={tieTooltip}>
+                          <span
+                            className={`pill${row.tieTone ? ` ${row.tieTone}` : ""}`}
+                            data-tooltip={tieTooltip}
+                            aria-label={tieTooltip}
+                          >
                             {row.tieLabel}
                           </span>
                         </div>

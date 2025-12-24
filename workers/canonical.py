@@ -393,12 +393,16 @@ def _add_cash_flow_residuals(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         if not template:
             continue
         base_unit = template.get("unit")
+        base_start = template.get("period_start")
 
         def _value(item: str) -> Optional[float]:
             row = line_map.get(item)
             if not row:
                 return None
             if base_unit and row.get("unit") and row.get("unit") != base_unit:
+                return None
+            row_start = row.get("period_start")
+            if base_start and row_start and row_start != base_start:
                 return None
             val = row.get("value")
             return float(val) if val is not None else None

@@ -990,10 +990,7 @@ def compute_tie_checks(
         if (
             current_period_type == "duration"
             and prev_period_type == "duration"
-            and (
-                (start and prev_start and start == prev_start)
-                or (start is None or prev_start is None)
-            )
+            and (start and prev_start and start == prev_start)
         ):
             return val - prev_val
 
@@ -1046,12 +1043,23 @@ def compute_tie_checks(
             else None
         )
         curr_cash = vals.get("cash", {}).get("value")
+        change_in_cash = quarterized("change_in_cash", idx)
         cash_delta = (
-            vals.get("change_in_cash", {}).get("value")
-            if vals.get("change_in_cash")
+            change_in_cash
+            if change_in_cash is not None
             else (curr_cash - prev_cash if None not in (curr_cash, prev_cash) else None)
         )
-        cf_tie = (cf_sum - cash_delta) if None not in (cf_sum, cash_delta) else None
+        starts = {
+            vals.get(item, {}).get("start")
+            for item in ("cfo", "cfi", "cff", "change_in_cash")
+            if vals.get(item, {}).get("value") is not None and vals.get(item, {}).get("start")
+        }
+        if len(starts) > 1:
+            cf_sum = None
+            cash_delta = None
+            cf_tie = None
+        else:
+            cf_tie = (cf_sum - cash_delta) if None not in (cf_sum, cash_delta) else None
 
         ties[period] = {
             "period_end": payload.get("period_end", period),
