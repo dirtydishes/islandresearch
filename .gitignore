@@ -39,6 +39,8 @@ pnpm-debug.log*
 # Local data/artifacts
 api/app/data/
 api/tests/__pycache__/
+workers/__pycache__/
+workers/tests/__pycache__/
 frontend/.next/cache/
 data/
 storage/
