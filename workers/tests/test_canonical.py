@@ -2,7 +2,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from workers.canonical import aggregate_canonical_rows, log_tie_checks
+from workers.canonical import aggregate_canonical_rows, log_tie_checks, _align_cash_flow_starts
 from workers.parser import parse_inline_xbrl
 
 
@@ -15,6 +15,38 @@ def _resolve_fixture_path(relative_path: str) -> Path:
         if alt.is_file():
             return alt
     return path
+
+
+def _coverage_counts(html_path: Path, period_end: str, ticker: str, cik: str) -> tuple[dict[str, int], int]:
+    facts = parse_inline_xbrl(html_path.read_bytes())
+    rows = []
+    for i, fact in enumerate(facts, start=1):
+        rows.append(
+            {
+                "id": i,
+                "ticker": ticker,
+                "cik": cik,
+                "accession": "acc-real",
+                "period_end": fact.get("period_end"),
+                "period_type": fact.get("period_type"),
+                "statement": fact.get("statement"),
+                "line_item": fact.get("line_item"),
+                "value": fact.get("value"),
+                "unit": fact.get("unit"),
+            }
+        )
+    aggregated = aggregate_canonical_rows(rows)
+    by_statement: dict[str, set[str]] = {}
+    for row in aggregated:
+        if row.get("period_end") != period_end:
+            continue
+        statement = row.get("statement")
+        line_item = row.get("line_item")
+        if statement and line_item:
+            by_statement.setdefault(statement, set()).add(line_item)
+    counts = {statement: len(items) for statement, items in by_statement.items()}
+    total = sum(counts.values())
+    return counts, total
 
 
 class AggregateCanonicalRowsTests(unittest.TestCase):
@@ -118,6 +150,54 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
         self.assertEqual(len(aggregated), 1)
         self.assertEqual(aggregated[0]["line_item"], "revenue")
 
+    def test_prefers_latest_accession_over_shorter_duration(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 1, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 100,
+                "unit": "usd",
+            },
+            {
+                "id": 2,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0001",
+                "period_start": date(2023, 4, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 50,
+                "unit": "usd",
+            },
+            {
+                "id": 3,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 4, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 60,
+                "unit": "usd",
+            },
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        self.assertEqual(len(aggregated), 1)
+        self.assertEqual(aggregated[0]["value"], 60.0)
+        self.assertEqual(aggregated[0]["accession"], "0002")
+        self.assertEqual(aggregated[0]["period_start"], date(2023, 4, 1))
+
 
 class TieCheckTests(unittest.TestCase):
     def test_balance_sheet_prefers_liabilities_equity(self) -> None:
@@ -185,6 +265,108 @@ class TieCheckTests(unittest.TestCase):
         self.assertEqual(len(aggregated), 1)
         self.assertEqual(aggregated[0]["value"], 120.0)
         self.assertEqual(aggregated[0]["period_start"], date(2023, 4, 1))
+
+
+class CashFlowAlignmentTests(unittest.TestCase):
+    def test_aligns_cash_flow_items_to_cfo_period_start(self) -> None:
+        period_end = date(2023, 6, 30)
+        rows = [
+            {
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 4, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfo",
+                "value": 100.0,
+                "unit": "USD",
+                "source_fact_id": 1,
+            },
+            {
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 1, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfi",
+                "value": -50.0,
+                "unit": "USD",
+                "source_fact_id": 2,
+            },
+            {
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 1, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cff",
+                "value": -30.0,
+                "unit": "USD",
+                "source_fact_id": 3,
+            },
+            {
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0002",
+                "period_start": date(2023, 1, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_in_cash",
+                "value": 20.0,
+                "unit": "USD",
+                "source_fact_id": 4,
+            },
+        ]
+        fact_rows = [
+            {
+                "id": 10,
+                "accession": "0002",
+                "period_start": date(2023, 4, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cfi",
+                "value": -40.0,
+                "unit": "USD",
+            },
+            {
+                "id": 11,
+                "accession": "0002",
+                "period_start": date(2023, 4, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "cff",
+                "value": -20.0,
+                "unit": "USD",
+            },
+            {
+                "id": 12,
+                "accession": "0002",
+                "period_start": date(2023, 4, 1),
+                "period_end": period_end,
+                "period_type": "duration",
+                "statement": "cash_flow",
+                "line_item": "change_in_cash",
+                "value": 40.0,
+                "unit": "USD",
+            },
+        ]
+        aligned = _align_cash_flow_starts(rows, fact_rows)
+        line_map = {row["line_item"]: row for row in aligned if row["statement"] == "cash_flow"}
+        self.assertEqual(line_map["cfi"]["period_start"], date(2023, 4, 1))
+        self.assertEqual(line_map["cfi"]["value"], -40.0)
+        self.assertEqual(line_map["cff"]["period_start"], date(2023, 4, 1))
+        self.assertEqual(line_map["cff"]["value"], -20.0)
+        self.assertEqual(line_map["change_in_cash"]["period_start"], date(2023, 4, 1))
+        self.assertEqual(line_map["change_in_cash"]["value"], 40.0)
 
     def test_adds_balance_sheet_residuals(self) -> None:
         rows = [
@@ -722,6 +904,58 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
             for statement, required in required_by_statement.items():
                 missing = required - by_statement.get(statement, set())
                 self.assertFalse(missing, f"{ticker} missing {sorted(missing)} in {statement}")
+
+    def test_regression_coverage_aapl_2023_q2_q3(self) -> None:
+        cases = [
+            (
+                _resolve_fixture_path("storage/raw/0000320193/000032019323000064_primary.html"),
+                "2023-04-01",
+                {"income_statement": 15, "balance_sheet": 20, "cash_flow": 14},
+                50,
+            ),
+            (
+                _resolve_fixture_path("storage/raw/0000320193/000032019323000077_primary.html"),
+                "2023-07-01",
+                {"income_statement": 15, "balance_sheet": 20, "cash_flow": 15},
+                50,
+            ),
+        ]
+        for html_path, period_end, floors, total_floor in cases:
+            self.assertTrue(html_path.is_file(), f"Fixture missing: {html_path}")
+            counts, total = _coverage_counts(html_path, period_end, "AAPL", "0000320193")
+            for statement, floor in floors.items():
+                self.assertGreaterEqual(
+                    counts.get(statement, 0),
+                    floor,
+                    f"AAPL {period_end} {statement} coverage regression",
+                )
+            self.assertGreaterEqual(total, total_floor, f"AAPL {period_end} total coverage regression")
+
+    def test_regression_coverage_amzn_2023_q2(self) -> None:
+        html_path = _resolve_fixture_path("storage/raw/0001018724/000101872423000012_primary.html")
+        self.assertTrue(html_path.is_file(), f"Fixture missing: {html_path}")
+        counts, total = _coverage_counts(html_path, "2023-06-30", "AMZN", "0001018724")
+        floors = {"income_statement": 14, "balance_sheet": 19, "cash_flow": 12}
+        for statement, floor in floors.items():
+            self.assertGreaterEqual(
+                counts.get(statement, 0),
+                floor,
+                f"AMZN 2023-06-30 {statement} coverage regression",
+            )
+        self.assertGreaterEqual(total, 47, "AMZN 2023-06-30 total coverage regression")
+
+    def test_regression_coverage_nvda_2023_q1(self) -> None:
+        html_path = _resolve_fixture_path("storage/raw/0001045810/000104581023000093_primary.html")
+        self.assertTrue(html_path.is_file(), f"Fixture missing: {html_path}")
+        counts, total = _coverage_counts(html_path, "2023-04-30", "NVDA", "0001045810")
+        floors = {"income_statement": 15, "balance_sheet": 21, "cash_flow": 10}
+        for statement, floor in floors.items():
+            self.assertGreaterEqual(
+                counts.get(statement, 0),
+                floor,
+                f"NVDA 2023-04-30 {statement} coverage regression",
+            )
+        self.assertGreaterEqual(total, 48, "NVDA 2023-04-30 total coverage regression")
 
 
 if __name__ == "__main__":

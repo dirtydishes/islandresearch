@@ -101,10 +101,16 @@ def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end:
             }
             continue
         choose_current = False
-        if accession and existing.get("accession"):
-            choose_current = accession > existing["accession"]
-        elif accession and not existing.get("accession"):
+        existing_accession = existing.get("accession")
+        if accession and existing_accession:
+            if accession > existing_accession:
+                choose_current = True
+            elif accession < existing_accession:
+                continue
+        elif accession and not existing_accession:
             choose_current = True
+        elif existing_accession and not accession:
+            continue
 
         current_value = existing.get("value")
         if choose_current:
@@ -376,7 +382,7 @@ def _align_cash_flow_starts(
     rows: List[Dict[str, Any]], fact_rows: Iterable[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """
-    Align change_in_cash to the same period_start as CFO when multiple spans exist.
+    Align cash flow line items to the same period_start as CFO when multiple spans exist.
     """
     if not rows:
         return rows
@@ -391,14 +397,24 @@ def _align_cash_flow_starts(
             continue
         by_period_unit.setdefault((period_end, unit), {})[row.get("line_item")] = row
 
-    candidates: Dict[Tuple[Any, str], List[Dict[str, Any]]] = {}
+    align_items = {
+        "cfi",
+        "cff",
+        "change_in_cash",
+        "fx_on_cash",
+        "change_in_restricted_cash",
+    }
+    candidates: Dict[Tuple[Any, str, str], List[Dict[str, Any]]] = {}
     for fact in fact_rows:
-        if fact.get("statement") != "cash_flow" or fact.get("line_item") != "change_in_cash":
+        if fact.get("statement") != "cash_flow":
+            continue
+        line_item = fact.get("line_item")
+        if line_item not in align_items:
             continue
         if fact.get("value") is None or fact.get("period_end") is None:
             continue
         unit = _normalize_unit(fact.get("unit"))
-        key = (fact.get("period_end"), unit)
+        key = (fact.get("period_end"), unit, line_item)
         candidates.setdefault(key, []).append(fact)
 
     for key, line_map in by_period_unit.items():
@@ -408,43 +424,45 @@ def _align_cash_flow_starts(
         anchor_start = cfo.get("period_start")
         if not anchor_start:
             continue
-        change_candidates = candidates.get(key, [])
-        if not change_candidates:
-            continue
-        matching = [row for row in change_candidates if row.get("period_start") == anchor_start]
-        if not matching:
-            continue
-        selected = max(
-            matching,
-            key=lambda row: ((row.get("accession") or ""), row.get("id") or 0),
-        )
-        change_row = line_map.get("change_in_cash")
-        if change_row:
-            change_row.update(
-                {
-                    "value": float(selected.get("value")),
-                    "period_start": selected.get("period_start"),
-                    "accession": selected.get("accession") or change_row.get("accession"),
-                    "source_fact_id": selected.get("id"),
-                    "unit": _normalize_unit(selected.get("unit")) or change_row.get("unit"),
-                }
+        period_end, unit = key
+        for line_item in align_items:
+            item_candidates = candidates.get((period_end, unit, line_item), [])
+            if not item_candidates:
+                continue
+            matching = [row for row in item_candidates if row.get("period_start") == anchor_start]
+            if not matching:
+                continue
+            selected = max(
+                matching,
+                key=lambda row: ((row.get("accession") or ""), row.get("id") or 0),
             )
-        else:
-            rows.append(
-                {
-                    "ticker": cfo.get("ticker"),
-                    "cik": cfo.get("cik"),
-                    "accession": selected.get("accession") or cfo.get("accession"),
-                    "period_start": selected.get("period_start"),
-                    "period_end": cfo.get("period_end"),
-                    "period_type": cfo.get("period_type"),
-                    "statement": "cash_flow",
-                    "line_item": "change_in_cash",
-                    "value": float(selected.get("value")),
-                    "unit": _normalize_unit(selected.get("unit")) or cfo.get("unit"),
-                    "source_fact_id": selected.get("id"),
-                }
-            )
+            existing = line_map.get(line_item)
+            if existing:
+                existing.update(
+                    {
+                        "value": float(selected.get("value")),
+                        "period_start": selected.get("period_start"),
+                        "accession": selected.get("accession") or existing.get("accession"),
+                        "source_fact_id": selected.get("id"),
+                        "unit": _normalize_unit(selected.get("unit")) or existing.get("unit"),
+                    }
+                )
+            else:
+                rows.append(
+                    {
+                        "ticker": cfo.get("ticker"),
+                        "cik": cfo.get("cik"),
+                        "accession": selected.get("accession") or cfo.get("accession"),
+                        "period_start": selected.get("period_start"),
+                        "period_end": cfo.get("period_end"),
+                        "period_type": cfo.get("period_type"),
+                        "statement": "cash_flow",
+                        "line_item": line_item,
+                        "value": float(selected.get("value")),
+                        "unit": _normalize_unit(selected.get("unit")) or cfo.get("unit"),
+                        "source_fact_id": selected.get("id"),
+                    }
+                )
 
     return rows
 

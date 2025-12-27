@@ -73,6 +73,17 @@ def _apply_scale(value: Optional[float], scale: Optional[str]) -> Optional[float
         return value
 
 
+def _apply_ix_sign(value: Optional[float], sign: Optional[str]) -> Optional[float]:
+    if value is None or not sign:
+        return value
+    sign_value = sign.strip()
+    if sign_value.startswith("-"):
+        return -abs(value)
+    if sign_value.startswith("+"):
+        return abs(value)
+    return value
+
+
 def _normalize_unit(raw: Optional[str]) -> str:
     if not raw:
         return "USD"
@@ -228,6 +239,7 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         text = tag.get_text(strip=True)
         amount = _apply_scale(_parse_amount(text), tag.get("scale"))
         amount = _apply_decimals(amount, tag.get("decimals"))
+        amount = _apply_ix_sign(amount, tag.get("sign"))
         ctx_ref = tag.get("contextref")
         if ctx_ref and ctx_ref not in contexts:
             # Skip facts tied to disallowed/segment-heavy contexts.
@@ -299,6 +311,17 @@ def persist_fact(
     return True
 
 
+def _purge_existing_facts(accession: str, ticker: str) -> None:
+    ensure_schema()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM facts WHERE accession = %s AND ticker = %s",
+                (accession, ticker.upper()),
+            )
+        conn.commit()
+
+
 def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Dict[str, int]:
     """Parse a saved filing HTML and store a few demo facts."""
     if not os.path.isfile(html_path):
@@ -308,6 +331,7 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
     parsed_rows = parse_simple_table(content)
     inserted = 0
     dropped = 0
+    pending_facts: List[Dict[str, Optional[str]]] = []
     if parsed_rows:
         for row in parsed_rows:
             for key in list(row.keys()):
@@ -315,30 +339,72 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
                 if "revenue" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        if persist_fact(accession, cik, ticker, None, None, "revenue", value, source_path=html_path):
-                            inserted += 1
-                        else:
-                            dropped += 1
+                        pending_facts.append(
+                            {
+                                "line_item": "revenue",
+                                "statement": "income_statement",
+                                "value": value,
+                                "unit": "USD",
+                                "period_start": None,
+                                "period_end": None,
+                                "period_type": "duration",
+                            }
+                        )
                 if "net income" in lowered or "net loss" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        if persist_fact(accession, cik, ticker, None, None, "net_income", value, source_path=html_path):
-                            inserted += 1
-                        else:
-                            dropped += 1
+                        pending_facts.append(
+                            {
+                                "line_item": "net_income",
+                                "statement": "income_statement",
+                                "value": value,
+                                "unit": "USD",
+                                "period_start": None,
+                                "period_end": None,
+                                "period_type": "duration",
+                            }
+                        )
                 if "ebitda" in lowered:
                     value = _parse_amount(row[key])
                     if value is not None:
-                        if persist_fact(accession, cik, ticker, None, None, "ebitda", value, source_path=html_path):
-                            inserted += 1
-                        else:
-                            dropped += 1
+                        pending_facts.append(
+                            {
+                                "line_item": "ebitda",
+                                "statement": "income_statement",
+                                "value": value,
+                                "unit": "USD",
+                                "period_start": None,
+                                "period_end": None,
+                                "period_type": "duration",
+                            }
+                        )
     # XBRL path (primary)
     inline_facts = parse_inline_xbrl(content)
     for fact in inline_facts:
         if fact["value"] is None:
             continue
-        line_item = fact["line_item"] or "unknown"
+        pending_facts.append(fact)
+
+    if not pending_facts:
+        logger.info("Parsed 0 facts from %s", html_path)
+        return {"inserted": 0, "dropped": 0}
+
+    allowed_facts: List[Dict[str, Optional[str]]] = []
+    for fact in pending_facts:
+        line_item = fact.get("line_item") or "unknown"
+        statement = fact.get("statement") or "unknown"
+        if not is_allowed(statement, line_item):
+            dropped += 1
+            continue
+        allowed_facts.append(fact)
+
+    if not allowed_facts:
+        logger.info("Parsed 0 allowed facts from %s (dropped %d)", html_path, dropped)
+        return {"inserted": 0, "dropped": dropped}
+
+    _purge_existing_facts(accession, ticker)
+    for fact in allowed_facts:
+        line_item = fact.get("line_item") or "unknown"
         statement = fact.get("statement") or "unknown"
         ok = persist_fact(
             accession,
