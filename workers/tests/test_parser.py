@@ -136,10 +136,10 @@ class ParseRealFilingTests(unittest.TestCase):
         self.assertEqual(revenue["period_end"], "2025-10-26")
         self.assertEqual(revenue["period_type"], "duration")
         self.assertEqual(revenue["unit"], "USD")
-        self.assertAlmostEqual(revenue["value"], 57006000000.0)
+        self.assertAlmostEqual(revenue["value"], 147811000000.0)
 
         self.assertEqual(net_income["period_type"], "duration")
-        self.assertAlmostEqual(net_income["value"], 31910000000.0)
+        self.assertAlmostEqual(net_income["value"], 77107000000.0)
 
         self.assertEqual(assets["period_type"], "instant")
         self.assertEqual(assets["period_end"], "2025-10-26")
@@ -181,6 +181,27 @@ class ParseRealFilingTests(unittest.TestCase):
         self.assertTrue(any(v > 0 for v in share_values))
         self.assertTrue(any(v != 0 for v in capex_values))
         self.assertTrue(any(v is not None for v in cfo_values))
+
+    def test_prefers_cumulative_spans_for_quarterly_filings(self) -> None:
+        aapl_path = _resolve_fixture_path("storage/raw/0000320193/000032019323000077_primary.html")
+        self.assertTrue(aapl_path.is_file(), "Real filing fixture missing")
+        aapl_facts = parse_inline_xbrl(aapl_path.read_bytes())
+        aapl_starts = {
+            f["period_start"]
+            for f in aapl_facts
+            if f["line_item"] == "revenue" and f["period_end"] == "2023-07-01"
+        }
+        self.assertEqual(aapl_starts, {"2022-09-25"})
+
+        amzn_path = _resolve_fixture_path("storage/raw/0001018724/000101872423000012_primary.html")
+        self.assertTrue(amzn_path.is_file(), "Real filing fixture missing")
+        amzn_facts = parse_inline_xbrl(amzn_path.read_bytes())
+        amzn_starts = {
+            f["period_start"]
+            for f in amzn_facts
+            if f["line_item"] == "revenue" and f["period_end"] == "2023-06-30"
+        }
+        self.assertEqual(amzn_starts, {"2023-01-01"})
 
 
 class ParseStatementParityTests(unittest.TestCase):

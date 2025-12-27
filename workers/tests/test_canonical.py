@@ -933,14 +933,14 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
             (
                 _resolve_fixture_path("storage/raw/0000320193/000032019323000064_primary.html"),
                 "2023-04-01",
-                {"income_statement": 15, "balance_sheet": 20, "cash_flow": 14},
-                50,
+                {"income_statement": 16, "balance_sheet": 22, "cash_flow": 16},
+                54,
             ),
             (
                 _resolve_fixture_path("storage/raw/0000320193/000032019323000077_primary.html"),
                 "2023-07-01",
-                {"income_statement": 15, "balance_sheet": 20, "cash_flow": 15},
-                50,
+                {"income_statement": 16, "balance_sheet": 22, "cash_flow": 17},
+                55,
             ),
         ]
         for html_path, period_end, floors, total_floor in cases:
@@ -958,27 +958,27 @@ class CanonicalFromRealFilingTests(unittest.TestCase):
         html_path = _resolve_fixture_path("storage/raw/0001018724/000101872423000012_primary.html")
         self.assertTrue(html_path.is_file(), f"Fixture missing: {html_path}")
         counts, total = _coverage_counts(html_path, "2023-06-30", "AMZN", "0001018724")
-        floors = {"income_statement": 14, "balance_sheet": 19, "cash_flow": 12}
+        floors = {"income_statement": 15, "balance_sheet": 21, "cash_flow": 15}
         for statement, floor in floors.items():
             self.assertGreaterEqual(
                 counts.get(statement, 0),
                 floor,
                 f"AMZN 2023-06-30 {statement} coverage regression",
             )
-        self.assertGreaterEqual(total, 47, "AMZN 2023-06-30 total coverage regression")
+        self.assertGreaterEqual(total, 51, "AMZN 2023-06-30 total coverage regression")
 
     def test_regression_coverage_nvda_2023_q1(self) -> None:
         html_path = _resolve_fixture_path("storage/raw/0001045810/000104581023000093_primary.html")
         self.assertTrue(html_path.is_file(), f"Fixture missing: {html_path}")
         counts, total = _coverage_counts(html_path, "2023-04-30", "NVDA", "0001045810")
-        floors = {"income_statement": 15, "balance_sheet": 21, "cash_flow": 10}
+        floors = {"income_statement": 17, "balance_sheet": 23, "cash_flow": 12}
         for statement, floor in floors.items():
             self.assertGreaterEqual(
                 counts.get(statement, 0),
                 floor,
                 f"NVDA 2023-04-30 {statement} coverage regression",
             )
-        self.assertGreaterEqual(total, 48, "NVDA 2023-04-30 total coverage regression")
+        self.assertGreaterEqual(total, 52, "NVDA 2023-04-30 total coverage regression")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
@@ -110,6 +110,83 @@ def _normalize_unit(raw: Optional[str]) -> str:
     return cleaned.upper()
 
 
+def _duration_days(start: Optional[str], end: Optional[str]) -> Optional[int]:
+    if not start or not end:
+        return None
+    try:
+        start_date = date.fromisoformat(start.split("T")[0])
+        end_date = date.fromisoformat(end.split("T")[0])
+    except ValueError:
+        return None
+    return (end_date - start_date).days
+
+
+def _extract_document_metadata(soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
+    period_focus = None
+    document_type = None
+    for tag in soup.find_all():
+        name = tag.get("name")
+        if not name:
+            continue
+        lowered = name.lower()
+        if lowered == "dei:documentfiscalperiodfocus":
+            period_focus = tag.get_text(strip=True)
+        elif lowered == "dei:documenttype":
+            document_type = tag.get_text(strip=True)
+        if period_focus and document_type:
+            break
+    return period_focus, document_type
+
+
+def _infer_granularity(period_focus: Optional[str], document_type: Optional[str]) -> str:
+    if document_type:
+        doc = document_type.strip().upper()
+        if "10-K" in doc or "20-F" in doc:
+            return "annual"
+        if "10-Q" in doc:
+            return "quarter"
+    if period_focus:
+        focus = period_focus.strip().upper()
+        if focus == "FY":
+            return "annual"
+        if focus.startswith("Q"):
+            return "quarter"
+    return "unknown"
+
+
+def _pick_duration(durations: List[int], prefer_shorter: bool) -> Optional[int]:
+    if not durations:
+        return None
+    counts: Dict[int, int] = {}
+    for duration in durations:
+        counts[duration] = counts.get(duration, 0) + 1
+    return max(
+        counts.items(),
+        key=lambda item: (item[1], -item[0] if prefer_shorter else item[0]),
+    )[0]
+
+
+def _select_preferred_duration(durations: List[int], granularity: str) -> Optional[int]:
+    if not durations:
+        return None
+    if granularity == "quarter":
+        cumulative = [d for d in durations if d >= 120]
+        if cumulative:
+            return _pick_duration(cumulative, prefer_shorter=False)
+        quarter = [d for d in durations if 70 <= d <= 120]
+        return _pick_duration(quarter or durations, prefer_shorter=True)
+    if granularity == "annual":
+        annual = [d for d in durations if 300 <= d <= 420]
+        return _pick_duration(annual or durations, prefer_shorter=False)
+    quarter = [d for d in durations if d <= 120]
+    if quarter:
+        return _pick_duration(quarter, prefer_shorter=True)
+    annual = [d for d in durations if d >= 300]
+    if annual:
+        return _pick_duration(annual, prefer_shorter=False)
+    return _pick_duration(durations, prefer_shorter=True)
+
+
 def _context_is_allowed(dimensions: List[Tuple[str, str]]) -> bool:
     if not dimensions:
         return True
@@ -172,6 +249,8 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
     """Extract a small set of inline XBRL facts by tag name, including period info."""
     soup = BeautifulSoup(html_content, "html.parser")
     unit_map = _build_unit_map(soup)
+    period_focus, document_type = _extract_document_metadata(soup)
+    granularity = _infer_granularity(period_focus, document_type)
 
     # Build context map to resolve period_end and type.
     contexts: Dict[str, Dict[str, Optional[str]]] = {}
@@ -216,6 +295,9 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
             fallback_period_type = "duration" if end else fallback_period_type
 
     anchor_contexts = {stmt: set() for stmt in ANCHOR_LINE_ITEMS.keys()}
+    anchor_candidates: Dict[str, Dict[str, List[Dict[str, Optional[str]]]]] = {
+        stmt: {} for stmt in ANCHOR_LINE_ITEMS.keys()
+    }
     for tag in soup.find_all():
         name = tag.get("name")
         if not name or name not in TAG_MAP:
@@ -225,9 +307,44 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
         ctx_ref = tag.get("contextref")
         if ctx_ref and ctx_ref not in contexts:
             continue
+        ctx_data = contexts.get(ctx_ref or "", {})
+        period_end = ctx_data.get("period_end")
+        period_start = ctx_data.get("start")
+        period_type = ctx_data.get("period_type")
         for line_item, statement in mappings:
             if line_item in ANCHOR_LINE_ITEMS.get(statement, set()) and ctx_ref:
                 anchor_contexts[statement].add(ctx_ref)
+                if period_end:
+                    anchor_candidates[statement].setdefault(period_end, []).append(
+                        {
+                            "ctx_ref": ctx_ref,
+                            "period_start": period_start,
+                            "period_type": period_type,
+                        }
+                    )
+
+    preferred_contexts: Dict[str, Dict[str, set[str]]] = {stmt: {} for stmt in ANCHOR_LINE_ITEMS.keys()}
+    for statement, period_map in anchor_candidates.items():
+        for period_end, entries in period_map.items():
+            if statement == "balance_sheet":
+                preferred_contexts[statement][period_end] = {
+                    entry["ctx_ref"] for entry in entries if entry.get("ctx_ref")
+                }
+                continue
+            durations = []
+            for entry in entries:
+                duration = _duration_days(entry.get("period_start"), period_end)
+                if duration is not None:
+                    durations.append(duration)
+            preferred = _select_preferred_duration(durations, granularity)
+            if preferred is None:
+                continue
+            preferred_contexts[statement][period_end] = {
+                entry["ctx_ref"]
+                for entry in entries
+                if entry.get("ctx_ref")
+                and _duration_days(entry.get("period_start"), period_end) == preferred
+            }
 
     facts: List[Dict[str, Optional[str]]] = []
     for tag in soup.find_all():
@@ -254,6 +371,11 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
             anchors = anchor_contexts.get(statement, set())
             if anchors and line_item not in ANCHOR_LINE_ITEMS.get(statement, set()):
                 if not ctx_ref or ctx_ref not in anchors:
+                    continue
+            preferred_by_period = preferred_contexts.get(statement)
+            if preferred_by_period and period_end:
+                preferred_set = preferred_by_period.get(period_end)
+                if preferred_set and ctx_ref and ctx_ref not in preferred_set:
                     continue
             facts.append(
                 {

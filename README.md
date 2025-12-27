@@ -5,10 +5,11 @@ Public-filings sell-side model compiler: ingest EDGAR data, normalize financials
 ## Current status
 - Compose stack runs `api`, `worker`, `frontend`, `db`, `redis`, `minio`, plus a scheduler for nightly incremental + weekly strict backfills; `.env.example` seeds defaults.
 - Ingestion: `/ingest/{ticker}`, `/trigger/{ticker}`, and `/backfill/{ticker}` fetch and persist filings into `storage/raw/` (append-only) and `filings` in Postgres. Curated `data/ticker_cik.csv` is primary; SEC `company_tickers.json` can auto-download as fallback.
-- Parsing: inline XBRL extractor with context/segment filtering, unit normalization, and sign handling; HTML fallback for tables; refetches primary HTML when only an index is saved. Outputs `facts` with `source_path`.
+- Parsing: inline XBRL extractor with context/segment filtering, unit normalization, sign handling, and fiscal-period span normalization; HTML fallback for tables; refetches primary HTML when only an index is saved. Outputs `facts` with `source_path`.
 - Canonicalization: expanded GAAP tag map (IS/BS/CF + shares/EPS + working capital + debt/equity), derived residuals, cash‑flow period alignment, and strict tie checks. Statement display order is enforced; `/statements` and `/summary` include provenance.
 - Model: driver-based 3‑statement forecast with base/bull/bear scenarios, forecast ranges, and driver provenance (`/summary`, `/model`).
-- Quality: coverage counts + missing items, balance‑sheet/cash‑flow tie deltas, and revenue backtests (including time‑travel) surfaced via `/summary`, `/quality`, `/backtest`.
+- Quality: coverage counts + missing items, balance‑sheet/cash‑flow tie deltas, and backtests (revenue, EPS, margins; including time‑travel) surfaced via `/summary`, `/quality`, `/backtest`.
+- Parity: `api/scripts/parity_check.py` compares `/summary` coverage with `/statements` counts and checks period-start consistency.
 - Frontend: `/` shows statements with period selector, coverage/ties, driver inputs, and source pills with hover details; `/model` shows the driver-based model view; `/mock` remains a deterministic fallback.
 
 ## Docs
@@ -91,6 +92,7 @@ curl "http://localhost:8000/backtest/AAPL"
 - Ad‑hoc full backfill: `python -m workers.jobs.backfill_all --limit 8 --strict-ties`.
 - Recent incremental backfill: `python -m workers.jobs.backfill_recent --limit 4`.
 - Per‑ticker backfill: `python -m workers.jobs.backfill_ticker AAPL --limit 24`.
+- Parity check (API vs statements): `python scripts/parity_check.py --max-tickers 10`.
 - Scheduler runs nightly (`BACKFILL_NIGHTLY_TIME_UTC`, `BACKFILL_NIGHTLY_LIMIT`, optional `BACKFILL_NIGHTLY_TICKERS`) and weekly (`BACKFILL_WEEKLY_DAY`, `BACKFILL_WEEKLY_TIME_UTC`, `BACKFILL_WEEKLY_LIMIT`) with strict ties on weekly runs.
 
 ## Scheduler & tie env vars
