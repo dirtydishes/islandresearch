@@ -739,7 +739,13 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                 </option>
               ))}
             </select>
-            <span className="muted period-hint">Span: {periodSpanLabel}</span>
+            <span
+              className="chip period-span"
+              data-tooltip="Fiscal period span for the selected statements."
+              aria-label="Fiscal period span for the selected statements."
+            >
+              Span: {periodSpanLabel}
+            </span>
           </div>
           {showQuality && (
             <div className="quality-grid">

@@ -639,6 +639,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 
@@ -648,6 +649,14 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
   padding: 6px 8px;
+}
+
+.period-span {
+  background: rgba(122, 162, 255, 0.12);
+  border-color: rgba(122, 162, 255, 0.24);
+  color: #d7e2ff;
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 .statement-block li span {
