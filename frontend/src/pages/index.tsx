@@ -15,6 +15,7 @@ type StatementLine = {
 };
 
 type StatementPeriod = {
+  period_start?: string | null;
   period_end: string;
   lines: Record<string, StatementLine[]>;
 };
@@ -355,6 +356,9 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const periodOptions = statements.map((p) => p.period_end);
 
   const currentPeriodKey = selectedPeriod ?? statements[0]?.period_end ?? null;
+  const currentPeriodStart = selectedPeriod
+    ? statements.find((p) => p.period_end === selectedPeriod)?.period_start ?? null
+    : statements[0]?.period_start ?? null;
   const currentPeriodLines = selectedPeriod
     ? statements.find((p) => p.period_end === selectedPeriod)?.lines ?? {}
     : statements[0]?.lines ?? {};
@@ -403,6 +407,11 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   ]
     .filter((part): part is string => Boolean(part))
     .join(" • ");
+  const periodSpanLabel = currentPeriodKey
+    ? currentPeriodStart
+      ? `${formatDate(currentPeriodStart)} → ${formatDate(currentPeriodKey)}`
+      : `${formatDate(currentPeriodKey)} (instant)`
+    : "n/a";
 
   const apiBaseClient = () => process.env.NEXT_PUBLIC_API_BASE || "/api";
   const buildSourceUrl = (path: string | null | undefined) => {
@@ -730,7 +739,7 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                 </option>
               ))}
             </select>
-            <span className="muted period-hint">Fiscal period end date.</span>
+            <span className="muted period-hint">Span: {periodSpanLabel}</span>
           </div>
           {showQuality && (
             <div className="quality-grid">

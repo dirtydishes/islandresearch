@@ -47,6 +47,12 @@ def main() -> int:
         consistent, starts = period_start_consistent(values, ("revenue", "net_income", "cfo"))
         if not consistent:
             mismatches.append(f"period_start mismatch {starts}")
+        statement_start = latest_statement.get("period_start")
+        start_set = {value for value in starts.values() if value}
+        if start_set and not statement_start:
+            mismatches.append("statement period_start missing")
+        elif statement_start and start_set and statement_start not in start_set:
+            mismatches.append(f"statement period_start {statement_start} not in {sorted(start_set)}")
 
         counts, total = statement_counts(latest_statement)
         if mismatches:

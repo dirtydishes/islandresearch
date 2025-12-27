@@ -1,4 +1,6 @@
-from typing import Any, Dict, List
+from collections import Counter
+from datetime import date
+from typing import Any, Dict, List, Optional
 
 from .db import ensure_schema, get_conn
 
@@ -85,6 +87,15 @@ STATEMENT_DISPLAY_ORDER = {
     ],
 }
 
+def _select_period_start(starts: List[date]) -> Optional[str]:
+    if not starts:
+        return None
+    counts = Counter(starts)
+    max_count = max(counts.values())
+    candidates = [start for start, count in counts.items() if count == max_count]
+    chosen = min(candidates)
+    return chosen.isoformat()
+
 
 def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
     ensure_schema()
@@ -92,7 +103,8 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT cf.period_end,
+                SELECT cf.period_start,
+                       cf.period_end,
                        cf.statement,
                        cf.line_item,
                        cf.value,
@@ -119,7 +131,10 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
             continue
         key = period_end.isoformat()
         if key not in period_map:
-            period_map[key] = {"period_end": key, "lines": {}}
+            period_map[key] = {"period_end": key, "period_start": None, "lines": {}, "_starts": []}
+        period_start = row.get("period_start")
+        if period_start:
+            period_map[key]["_starts"].append(period_start)
         statement = row["statement"]
         if not statement:
             continue
@@ -138,6 +153,7 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
         )
     # Order line items for each statement using a stable display order.
     for period_data in period_map.values():
+        period_data["period_start"] = _select_period_start(period_data.pop("_starts", []))
         ordered: Dict[str, list] = {}
         for stmt in STATEMENT_DISPLAY_ORDER.keys():
             items = period_data["lines"].get(stmt, [])
@@ -152,6 +168,11 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
         period_data["lines"] = ordered
 
     periods: List[Dict[str, Any]] = [
-        {"period_end": key, "lines": lines["lines"]} for key, lines in sorted(period_map.items(), key=lambda kv: kv[0], reverse=True)
+        {
+            "period_end": key,
+            "period_start": lines.get("period_start"),
+            "lines": lines["lines"],
+        }
+        for key, lines in sorted(period_map.items(), key=lambda kv: kv[0], reverse=True)
     ]
     return {"periods": periods[:limit]}

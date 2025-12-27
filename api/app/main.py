@@ -168,6 +168,7 @@ class StatementLine(BaseModel):
 
 
 class StatementPeriod(BaseModel):
+    period_start: str | None = None
     period_end: str
     lines: dict[str, list[StatementLine]]
 
