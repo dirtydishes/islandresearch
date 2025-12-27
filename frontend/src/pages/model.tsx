@@ -8,6 +8,14 @@ type ModelValue = {
   source?: Record<string, any>;
 };
 
+type BacktestMetrics = {
+  mae: number;
+  mape: number;
+  directional_accuracy: number;
+  interval_coverage: number;
+  samples?: number;
+};
+
 type ModelPeriod = {
   period_end: string;
   values: Record<string, ModelValue>;
@@ -41,7 +49,7 @@ type ModelResponse = {
       missing?: Record<string, string[]>;
     }
   >;
-  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
+  backtest_time_travel?: Record<string, BacktestMetrics>;
 };
 
 type QualityResponse = {
@@ -57,7 +65,7 @@ type QualityResponse = {
     }
   >;
   ties?: Record<string, { period_end: string; bs_tie: number | null; cf_tie: number | null }>;
-  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
+  backtest_time_travel?: Record<string, BacktestMetrics>;
 };
 
 type Props = {
@@ -266,6 +274,14 @@ function formatDriverValue(key: string, value: number | null | undefined) {
   return formatCurrency(value);
 }
 
+function formatBacktestMae(metric: string, value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  if (metric.toLowerCase().includes("margin")) {
+    return formatPercent(value);
+  }
+  return formatCurrency(value);
+}
+
 function formatValue(value: number | null, unit: string | null | undefined) {
   if (value === null || value === undefined) return "—";
   if (unit && unit.toUpperCase() === "SHARES") {
@@ -325,7 +341,7 @@ export default function ModelPage({ ticker, model, quality, actualsLimit, error 
     ? Object.values(missing).reduce((sum, items) => sum + (items?.length ?? 0), 0)
     : 0;
   const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
-  const timeTravel = quality?.backtest_time_travel || model?.backtest_time_travel || null;
+  const timeTravelMetrics = quality?.backtest_time_travel || model?.backtest_time_travel || null;
   const qualityPeriods = Object.keys(coverageMap || {}).sort().reverse().slice(0, 6);
   const qualityRows = qualityPeriods.map((period) => {
     const periodCoverage = coverageMap[period];
@@ -368,8 +384,6 @@ export default function ModelPage({ ticker, model, quality, actualsLimit, error 
   const coverageTone = toneForCoverage(coveragePct);
   const coverageToneClass = coverageTone ? ` ${coverageTone}` : "";
   const hasDrivers = Object.keys(drivers).length > 0;
-  const daTone = toneForDirectionalAccuracy(timeTravel?.directional_accuracy);
-  const daToneClass = daTone ? ` ${daTone}` : "";
   const driverPeriodCount = Object.keys(coverageMap || {}).length;
   const driverWindow = driverPeriodCount ? Math.min(driverPeriodCount, 4) : 0;
   const forecastPeriodCount = (() => {
@@ -525,37 +539,23 @@ export default function ModelPage({ ticker, model, quality, actualsLimit, error 
                   Quality
                 </span>
               </div>
-              {timeTravel ? (
-                <div className="metric-grid">
-                  <div className="metric-item">
-                    <div className="metric-label">MAE</div>
-                    <div className="metric-value">{formatCurrency(timeTravel.mae)}</div>
-                  </div>
-                  <div className="metric-item">
-                    <div className="metric-label">MAPE</div>
-                    <div className="metric-value">{formatPercent(timeTravel.mape)}</div>
-                  </div>
-                  <div className="metric-item">
-                    <div className="metric-label">Directional Acc.</div>
-                    <div className={`metric-value${daToneClass}`}>
-                      {Number.isNaN(timeTravel.directional_accuracy)
-                        ? "N/A"
-                        : formatPercent(timeTravel.directional_accuracy)}
-                    </div>
-                  </div>
-                  <div className="metric-item">
-                    <div className="metric-label">Interval Coverage</div>
-                    <div className="metric-value">
-                      {Number.isNaN(timeTravel.interval_coverage)
-                        ? "N/A"
-                        : formatPercent(timeTravel.interval_coverage)}
-                    </div>
-                  </div>
-                  <div className="metric-item">
-                    <div className="metric-label">Samples</div>
-                    <div className="metric-value">{timeTravel.samples ?? "—"}</div>
-                  </div>
-                </div>
+              {timeTravelMetrics ? (
+                <ul className="list">
+                  {["revenue", "eps_diluted", "gross_margin", "operating_margin", "net_margin"]
+                    .map((metric) => {
+                      const scored = timeTravelMetrics?.[metric];
+                      if (!scored) return null;
+                      return (
+                        <li key={metric}>
+                          <strong>{humanLabel(metric)}</strong> — MAE {formatBacktestMae(metric, scored.mae)} | DA{" "}
+                          {Number.isNaN(scored.directional_accuracy)
+                            ? "N/A"
+                            : formatPercent(scored.directional_accuracy)}{" "}
+                          {scored.samples ? `(n=${scored.samples})` : ""}
+                        </li>
+                      );
+                    })}
+                </ul>
               ) : (
                 <p className="muted">No time-travel backtest data.</p>
               )}

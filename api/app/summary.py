@@ -8,8 +8,7 @@ from .summary_utils import (
     ALLOWED_STATEMENTS,
     build_forecast,
     compute_drivers,
-    compute_revenue_backtest,
-    compute_revenue_time_travel,
+    compute_metric_backtests,
     compute_tie_checks,
     compute_coverage,
     filter_allowed,
@@ -34,7 +33,9 @@ def get_summary(ticker: str) -> Dict[str, Any]:
                        cf.value,
                        cf.unit,
                        cf.accession,
-                       f.source_path
+                       f.source_path,
+                       COALESCE(f.xbrl_tag, cf.source_xbrl_tag) AS source_xbrl_tag,
+                       COALESCE(f.context_ref, cf.source_context_ref) AS source_context_ref
                 FROM canonical_facts cf
                 LEFT JOIN facts f ON f.id = cf.source_fact_id
                 WHERE cf.ticker = %s
@@ -76,6 +77,8 @@ def get_summary(ticker: str) -> Dict[str, Any]:
                     "statement": row["statement"],
                     "unit": row["unit"],
                     "path": row.get("source_path"),
+                    "xbrl_tag": row.get("source_xbrl_tag"),
+                    "context_ref": row.get("source_context_ref"),
                 }
                 accession = row.get("accession")
                 if accession:
@@ -166,8 +169,8 @@ def get_summary(ticker: str) -> Dict[str, Any]:
 
     # Filter metrics to canonical schema and compute driver-based forecast.
     drivers = compute_drivers(allowed_metrics)
-    backtest = compute_revenue_backtest(allowed_metrics)
-    time_travel_backtest = compute_revenue_time_travel(allowed_metrics)
+    backtest = compute_metric_backtests(allowed_metrics, time_travel=False)
+    time_travel_backtest = compute_metric_backtests(allowed_metrics, time_travel=True)
     coverage = compute_coverage(allowed_metrics, applicable_by_period)
     ties = compute_tie_checks(allowed_metrics)
     forecast: List[Dict[str, Any]] = []

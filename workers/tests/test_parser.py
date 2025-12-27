@@ -54,6 +54,8 @@ class ParseInlineXBRLTests(unittest.TestCase):
         self.assertEqual(revenue["period_type"], "duration")
         self.assertEqual(revenue["unit"], "USD")
         self.assertEqual(revenue["value"], 9000.0)
+        self.assertEqual(revenue["xbrl_tag"], "us-gaap:Revenues")
+        self.assertEqual(revenue["context_ref"], "D2023Q2")
 
         assets = next(f for f in facts if f["line_item"] == "assets")
         self.assertEqual(assets["statement"], "balance_sheet")

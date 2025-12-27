@@ -8,6 +8,8 @@ type StatementLine = {
   unit: string | null;
   source_accession?: string | null;
   source_path?: string | null;
+  source_xbrl_tag?: string | null;
+  source_context_ref?: string | null;
   source_form?: string | null;
   source_filed_at?: string | null;
 };
@@ -20,6 +22,14 @@ type StatementPeriod = {
 type SummaryValue = {
   value: number | null;
   unit: string | null;
+};
+
+type BacktestMetrics = {
+  mae: number;
+  mape: number;
+  directional_accuracy: number;
+  interval_coverage: number;
+  samples?: number;
 };
 
 type Derived = {
@@ -39,7 +49,15 @@ type SummaryPeriod = {
   values: Record<string, SummaryValue>;
   sources?: Record<
     string,
-    { line_item?: string | null; period_end?: string | null; statement?: string | null; unit?: string | null; path?: string | null }
+    {
+      line_item?: string | null;
+      period_end?: string | null;
+      statement?: string | null;
+      unit?: string | null;
+      path?: string | null;
+      xbrl_tag?: string | null;
+      context_ref?: string | null;
+    }
   >;
 };
 
@@ -73,8 +91,8 @@ type SummaryResponse = {
     }
   >;
   ties?: Record<string, { period_end: string; bs_tie: number | null; cf_sum: number | null; cash_delta: number | null; cf_tie: number | null }>;
-  backtest?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
-  backtest_time_travel?: { mae: number; mape: number; directional_accuracy: number; interval_coverage: number; samples?: number };
+  backtest?: Record<string, BacktestMetrics>;
+  backtest_time_travel?: Record<string, BacktestMetrics>;
 };
 
 type Props = {
@@ -207,6 +225,14 @@ function formatDriverValue(key: string, value: number | null | undefined) {
   return formatCurrency(value);
 }
 
+function formatBacktestMae(metric: string, value: number | null | undefined) {
+  if (value === null || value === undefined) return "—";
+  if (metric.toLowerCase().includes("margin")) {
+    return formatPercent(value);
+  }
+  return formatCurrency(value);
+}
+
 function valueClass(value: number | null | undefined) {
   if (value === null || value === undefined) return "value-neutral";
   if (Number.isNaN(value)) return "value-neutral";
@@ -316,9 +342,14 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const drivers = summary?.drivers || null;
   const apiForecast = summary?.forecast && summary.forecast.length > 0 ? summary.forecast[0] : null;
   const latestForecast = apiForecast || buildForecastFromStatements(statements);
-  const backtest = summary?.backtest;
+  const backtestMetrics = summary?.backtest || null;
+  const revenueBacktest = backtestMetrics?.revenue || null;
   const forecastAllowed =
-    !backtest || Number.isNaN(backtest.directional_accuracy) || backtest.directional_accuracy >= 0.5 ? true : false;
+    !revenueBacktest ||
+    Number.isNaN(revenueBacktest.directional_accuracy) ||
+    revenueBacktest.directional_accuracy >= 0.5
+      ? true
+      : false;
   const previousSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
   const prevSummaryValues = previousSummary?.values || null;
   const periodOptions = statements.map((p) => p.period_end);
@@ -351,10 +382,8 @@ export default function Home({ ticker, statements, summary, error }: Props) {
   const missingOrder = ["income_statement", "balance_sheet", "cash_flow"];
   const currentTies = currentPeriodKey ? summary?.ties?.[currentPeriodKey] : null;
   const prevSummary = summary?.periods && summary.periods.length > 1 ? summary.periods[1] : null;
-  const timeTravel = summary?.backtest_time_travel || null;
-  const daTone = toneForDirectionalAccuracy(timeTravel?.directional_accuracy);
-  const daToneClass = daTone ? ` ${daTone}` : "";
-  const showQuality = Boolean(currentCoverage || currentTies || timeTravel);
+  const timeTravelMetrics = summary?.backtest_time_travel || null;
+  const showQuality = Boolean(currentCoverage || currentTies || timeTravelMetrics);
   const hasDrivers = Boolean(drivers && Object.keys(drivers).length > 0);
   const driverPeriodCount = summary?.periods?.length ?? 0;
   const driverWindow = driverPeriodCount ? Math.min(driverPeriodCount, 4) : 0;
@@ -609,13 +638,13 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                       );
                     })}
                   </ul>
-                  {backtest && (
+                  {revenueBacktest && (
                     <div className="muted">
-                      Backtest: MAE {formatCurrency(backtest.mae || 0)} | DA{" "}
-                      {Number.isNaN(backtest.directional_accuracy)
+                      Revenue backtest: MAE {formatCurrency(revenueBacktest.mae || 0)} | DA{" "}
+                      {Number.isNaN(revenueBacktest.directional_accuracy)
                         ? "N/A"
-                        : `${(backtest.directional_accuracy * 100).toFixed(0)}%`}{" "}
-                      {backtest.samples ? `(n=${backtest.samples})` : ""}
+                        : `${(revenueBacktest.directional_accuracy * 100).toFixed(0)}%`}{" "}
+                      {revenueBacktest.samples ? `(n=${revenueBacktest.samples})` : ""}
                     </div>
                   )}
                 </>
@@ -860,37 +889,23 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                     Quality
                   </span>
                 </div>
-                {timeTravel ? (
-                  <div className="metric-grid">
-                    <div className="metric-item">
-                      <div className="metric-label">MAE</div>
-                      <div className="metric-value">{formatCurrency(timeTravel.mae)}</div>
-                    </div>
-                    <div className="metric-item">
-                      <div className="metric-label">MAPE</div>
-                      <div className="metric-value">{formatPercent(timeTravel.mape)}</div>
-                    </div>
-                    <div className="metric-item">
-                      <div className="metric-label">Directional Acc.</div>
-                      <div className={`metric-value${daToneClass}`}>
-                        {Number.isNaN(timeTravel.directional_accuracy)
-                          ? "N/A"
-                          : formatPercent(timeTravel.directional_accuracy)}
-                      </div>
-                    </div>
-                    <div className="metric-item">
-                      <div className="metric-label">Interval Coverage</div>
-                      <div className="metric-value">
-                        {Number.isNaN(timeTravel.interval_coverage)
-                          ? "N/A"
-                          : formatPercent(timeTravel.interval_coverage)}
-                      </div>
-                    </div>
-                    <div className="metric-item">
-                      <div className="metric-label">Samples</div>
-                      <div className="metric-value">{timeTravel.samples ?? "—"}</div>
-                    </div>
-                  </div>
+                {timeTravelMetrics ? (
+                  <ul className="list">
+                    {["revenue", "eps_diluted", "gross_margin", "operating_margin", "net_margin"]
+                      .map((metric) => {
+                        const scored = timeTravelMetrics?.[metric];
+                        if (!scored) return null;
+                        return (
+                          <li key={metric}>
+                            <strong>{humanLabel(metric)}</strong> — MAE {formatBacktestMae(metric, scored.mae)} | DA{" "}
+                            {Number.isNaN(scored.directional_accuracy)
+                              ? "N/A"
+                              : formatPercent(scored.directional_accuracy)}{" "}
+                            {scored.samples ? `(n=${scored.samples})` : ""}
+                          </li>
+                        );
+                      })}
+                  </ul>
                 ) : (
                   <p className="muted">No time-travel backtest data.</p>
                 )}
@@ -928,6 +943,8 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                           const sourceForm = item.source_form || filingFallback?.form || null;
                           const sourceFiledAt = item.source_filed_at || filingFallback?.filed_at || null;
                           const sourceAccession = item.source_accession || null;
+                          const sourceTag = item.source_xbrl_tag || summarySource?.xbrl_tag || null;
+                          const sourceContext = item.source_context_ref || summarySource?.context_ref || null;
                           const sourceLink = sourcePath ? buildSourceUrl(sourcePath) : null;
                           const sourceLabel = `Source: ${buildSourceLabel(
                             ticker,
@@ -941,6 +958,8 @@ export default function Home({ ticker, statements, summary, error }: Props) {
                             `Form: ${sourceForm ? formatForm(sourceForm) : "n/a"}`,
                             `Filed: ${sourceFiledAt ? formatDate(sourceFiledAt) : "n/a"}`,
                             `Accession: ${sourceAccession || "n/a"}`,
+                            `XBRL tag: ${sourceTag || "n/a"}`,
+                            `Context: ${sourceContext || "n/a"}`,
                             `Statement: ${humanLabel(summarySource?.statement || stmt)}`,
                             `Line item: ${humanLabel(item.line_item)}`,
                             `Period end: ${currentPeriodKey || "n/a"}`,

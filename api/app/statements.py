@@ -99,6 +99,8 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
                        cf.unit,
                        cf.accession,
                        fact.source_path,
+                       COALESCE(fact.xbrl_tag, cf.source_xbrl_tag) AS source_xbrl_tag,
+                       COALESCE(fact.context_ref, cf.source_context_ref) AS source_context_ref,
                        fil.form,
                        fil.filed_at
                 FROM canonical_facts cf
@@ -128,6 +130,8 @@ def get_statements_for_ticker(ticker: str, limit: int = 8) -> Dict[str, Any]:
                 "unit": row["unit"],
                 "source_accession": row.get("accession"),
                 "source_path": row.get("source_path"),
+                "source_xbrl_tag": row.get("source_xbrl_tag"),
+                "source_context_ref": row.get("source_context_ref"),
                 "source_form": row.get("form"),
                 "source_filed_at": row.get("filed_at").isoformat() if row.get("filed_at") else None,
             }

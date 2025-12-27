@@ -104,6 +104,8 @@ class Fact(BaseModel):
     value: float | None
     unit: str | None
     source_path: str | None
+    xbrl_tag: str | None = None
+    context_ref: str | None = None
     created_at: datetime | None
 
 
@@ -118,6 +120,8 @@ class CanonicalFact(BaseModel):
     value: float | None
     unit: str | None
     source_fact_id: int | None
+    source_xbrl_tag: str | None = None
+    source_context_ref: str | None = None
     created_at: datetime | None
 
 
@@ -157,6 +161,8 @@ class StatementLine(BaseModel):
     unit: str | None
     source_accession: str | None = None
     source_path: str | None = None
+    source_xbrl_tag: str | None = None
+    source_context_ref: str | None = None
     source_form: str | None = None
     source_filed_at: date | None = None
 

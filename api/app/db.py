@@ -39,6 +39,8 @@ def ensure_schema() -> None:
         value NUMERIC,
         unit TEXT,
         source_path TEXT,
+        xbrl_tag TEXT,
+        context_ref TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS canonical_facts (
@@ -54,6 +56,8 @@ def ensure_schema() -> None:
         value NUMERIC,
         unit TEXT,
         source_fact_id INTEGER,
+        source_xbrl_tag TEXT,
+        source_context_ref TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
     """
@@ -61,7 +65,11 @@ def ensure_schema() -> None:
         with conn.cursor() as cur:
             cur.execute(ddl)
             cur.execute("ALTER TABLE facts ADD COLUMN IF NOT EXISTS period_start DATE;")
+            cur.execute("ALTER TABLE facts ADD COLUMN IF NOT EXISTS xbrl_tag TEXT;")
+            cur.execute("ALTER TABLE facts ADD COLUMN IF NOT EXISTS context_ref TEXT;")
             cur.execute("ALTER TABLE canonical_facts ADD COLUMN IF NOT EXISTS period_start DATE;")
+            cur.execute("ALTER TABLE canonical_facts ADD COLUMN IF NOT EXISTS source_xbrl_tag TEXT;")
+            cur.execute("ALTER TABLE canonical_facts ADD COLUMN IF NOT EXISTS source_context_ref TEXT;")
         conn.commit()
 
 

@@ -150,6 +150,29 @@ class AggregateCanonicalRowsTests(unittest.TestCase):
         self.assertEqual(len(aggregated), 1)
         self.assertEqual(aggregated[0]["line_item"], "revenue")
 
+    def test_preserves_source_tag_and_context(self) -> None:
+        rows = [
+            {
+                "id": 1,
+                "ticker": "demo",
+                "cik": "0000000000",
+                "accession": "0001",
+                "period_start": date(2023, 1, 1),
+                "period_end": date(2023, 6, 30),
+                "period_type": "duration",
+                "statement": "income_statement",
+                "line_item": "revenue",
+                "value": 100,
+                "unit": "usd",
+                "xbrl_tag": "us-gaap:Revenues",
+                "context_ref": "D2023Q2",
+            }
+        ]
+        aggregated = aggregate_canonical_rows(rows)
+        self.assertEqual(len(aggregated), 1)
+        self.assertEqual(aggregated[0]["source_xbrl_tag"], "us-gaap:Revenues")
+        self.assertEqual(aggregated[0]["source_context_ref"], "D2023Q2")
+
     def test_prefers_latest_accession_over_shorter_duration(self) -> None:
         rows = [
             {

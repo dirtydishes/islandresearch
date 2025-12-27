@@ -801,6 +801,73 @@ def compute_revenue_backtest(
     Build simple revenue forecasts from sequential periods and score against actuals.
     Uses drivers from the prior period (with fallback growth) to project the next.
     """
+    return compute_metric_backtest(metrics, "revenue", time_travel=False)
+
+
+def compute_revenue_time_travel(
+    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
+) -> Optional[Dict[str, float]]:
+    """
+    Time-travel backtest: forecast each next period using only data available as of the prior period.
+    """
+    return compute_metric_backtest(metrics, "revenue", time_travel=True)
+
+
+BACKTEST_METRICS = (
+    "revenue",
+    "eps_diluted",
+    "gross_margin",
+    "operating_margin",
+    "net_margin",
+)
+
+
+def _actual_metric_value(
+    values: Dict[str, Dict[str, Optional[float]]], metric_key: str
+) -> Optional[float]:
+    if metric_key == "revenue":
+        return _get_value(values, "revenue")
+    if metric_key == "gross_margin":
+        return _safe_div(_get_value(values, "gross_profit"), _get_value(values, "revenue"))
+    if metric_key == "operating_margin":
+        return _safe_div(_get_value(values, "operating_income"), _get_value(values, "revenue"))
+    if metric_key == "net_margin":
+        return _safe_div(_get_value(values, "net_income"), _get_value(values, "revenue"))
+    if metric_key == "eps_diluted":
+        eps = _get_value(values, "eps_diluted")
+        if eps is not None:
+            return eps
+        net_income = _get_value(values, "net_income")
+        shares = (
+            _get_value(values, "shares_diluted")
+            or _get_value(values, "shares_basic")
+            or _get_value(values, "shares_outstanding")
+        )
+        return _safe_div(net_income, shares)
+    return None
+
+
+def _forecast_metric_value(
+    metric_key: str, forecast_revenue: float, drivers: Dict[str, Dict]
+) -> Optional[float]:
+    if metric_key == "revenue":
+        return forecast_revenue
+    if metric_key in ("gross_margin", "operating_margin", "net_margin"):
+        return drivers.get(metric_key, {}).get("value")
+    if metric_key == "eps_diluted":
+        net_margin = drivers.get("net_margin", {}).get("value")
+        shares = drivers.get("shares", {}).get("value")
+        if net_margin is None or shares in (None, 0):
+            return None
+        return (forecast_revenue * net_margin) / shares
+    return None
+
+
+def compute_metric_backtest(
+    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
+    metric_key: str,
+    time_travel: bool = False,
+) -> Optional[Dict[str, float]]:
     if not metrics or len(metrics) < 2:
         return None
 
@@ -811,66 +878,43 @@ def compute_revenue_backtest(
     for idx in range(1, len(periods)):
         prev_period = periods[idx - 1]
         curr_period = periods[idx]
-        prev_metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]] = {
-            prev_period: metrics[prev_period]
-        }
-        if idx >= 2:
-            prev_metrics[periods[idx - 2]] = metrics[periods[idx - 2]]
-        drivers_prev = compute_drivers(prev_metrics)
-
-        prev_revenue = metrics[prev_period]["values"].get("revenue", {}).get("value")
-        if prev_revenue is None:
-            continue
-        growth = drivers_prev.get("revenue_growth", {}).get("value") or 0.0
-        forecast_revenue = prev_revenue * (1 + growth)
-
-        actual_revenue = metrics[curr_period]["values"].get("revenue", {}).get("value")
-        if actual_revenue is None:
-            continue
-
-        forecasts.append(forecast_revenue)
-        actuals.append(actual_revenue)
-
-    if not actuals or not forecasts:
-        return None
-    scored = compute_backtest_metrics(actuals, forecasts)
-    scored["samples"] = len(actuals)
-    return scored
-
-
-def compute_revenue_time_travel(
-    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
-) -> Optional[Dict[str, float]]:
-    """
-    Time-travel backtest: forecast each next period using only data available as of the prior period.
-    """
-    if not metrics or len(metrics) < 2:
-        return None
-
-    periods = sorted(metrics.keys())
-    actuals: List[float] = []
-    forecasts: List[float] = []
-
-    for idx in range(1, len(periods)):
-        as_of_period = periods[idx - 1]
-        metrics_asof = {p: metrics[p] for p in periods[:idx]}
+        if time_travel:
+            metrics_asof = {p: metrics[p] for p in periods[:idx]}
+        else:
+            metrics_asof = {prev_period: metrics[prev_period]}
+            if idx >= 2:
+                metrics_asof[periods[idx - 2]] = metrics[periods[idx - 2]]
         drivers = compute_drivers(metrics_asof)
-        prev_revenue = metrics_asof[as_of_period]["values"].get("revenue", {}).get("value")
+
+        prev_revenue = metrics_asof[prev_period]["values"].get("revenue", {}).get("value")
         if prev_revenue is None:
             continue
         growth = drivers.get("revenue_growth", {}).get("value") or 0.0
-        forecast = prev_revenue * (1 + growth)
-        actual = metrics[periods[idx]]["values"].get("revenue", {}).get("value")
-        if actual is None:
+        forecast_revenue = prev_revenue * (1 + growth)
+        forecast_value = _forecast_metric_value(metric_key, forecast_revenue, drivers)
+        actual_value = _actual_metric_value(metrics[curr_period]["values"], metric_key)
+        if forecast_value is None or actual_value is None:
             continue
-        forecasts.append(forecast)
-        actuals.append(actual)
+        forecasts.append(forecast_value)
+        actuals.append(actual_value)
 
     if not actuals or not forecasts:
         return None
     scored = compute_backtest_metrics(actuals, forecasts)
     scored["samples"] = len(actuals)
     return scored
+
+
+def compute_metric_backtests(
+    metrics: Dict[str, Dict[str, Dict[str, Optional[float]]]],
+    time_travel: bool = False,
+) -> Optional[Dict[str, Dict[str, float]]]:
+    results: Dict[str, Dict[str, float]] = {}
+    for metric in BACKTEST_METRICS:
+        scored = compute_metric_backtest(metrics, metric, time_travel=time_travel)
+        if scored:
+            results[metric] = scored
+    return results or None
 
 
 def compute_coverage(

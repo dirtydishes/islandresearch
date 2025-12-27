@@ -98,6 +98,8 @@ def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end:
                 "value": numeric_value,
                 "unit": unit,
                 "source_fact_id": source_id,
+                "source_xbrl_tag": row.get("xbrl_tag"),
+                "source_context_ref": row.get("context_ref"),
             }
             continue
         choose_current = False
@@ -125,6 +127,8 @@ def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end:
                 "value": numeric_value,
                 "unit": unit,
                 "source_fact_id": source_id,
+                "source_xbrl_tag": row.get("xbrl_tag"),
+                "source_context_ref": row.get("context_ref"),
             }
         else:
             if statement in ("cash_flow", "income_statement"):
@@ -151,6 +155,8 @@ def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end:
                             "accession": accession if accession else existing.get("accession"),
                             "period_start": period_start or existing.get("period_start"),
                             "source_fact_id": source_id if source_id is not None else existing.get("source_fact_id"),
+                            "source_xbrl_tag": row.get("xbrl_tag") or existing.get("source_xbrl_tag"),
+                            "source_context_ref": row.get("context_ref") or existing.get("source_context_ref"),
                         }
                     )
             else:
@@ -160,6 +166,8 @@ def aggregate_canonical_rows(rows: Iterable[Dict[str, Any]], default_period_end:
                     if accession and not existing.get("accession"):
                         existing["accession"] = accession
                     existing["source_fact_id"] = source_id if source_id is not None else existing.get("source_fact_id")
+                    existing["source_xbrl_tag"] = row.get("xbrl_tag") or existing.get("source_xbrl_tag")
+                    existing["source_context_ref"] = row.get("context_ref") or existing.get("source_context_ref")
     return [aggregated[k] for k in sorted(aggregated.keys(), key=lambda x: (x[2], x[4], x[5]))]
 
 
@@ -673,7 +681,19 @@ def materialize_canonical_for_ticker(ticker: str, strict_ties: Optional[bool] = 
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, ticker, cik, accession, period_start, period_end, period_type, statement, line_item, value, unit
+                SELECT id,
+                       ticker,
+                       cik,
+                       accession,
+                       period_start,
+                       period_end,
+                       period_type,
+                       statement,
+                       line_item,
+                       value,
+                       unit,
+                       xbrl_tag,
+                       context_ref
                 FROM facts
                 WHERE ticker = %s
                   AND value IS NOT NULL
@@ -697,8 +717,22 @@ def materialize_canonical_for_ticker(ticker: str, strict_ties: Optional[bool] = 
                 aggregated = _add_income_statement_derivations(aggregated)
                 aggregated = _add_cash_flow_residuals(aggregated)
                 insert_sql = """
-                INSERT INTO canonical_facts (ticker, cik, accession, period_start, period_end, period_type, statement, line_item, value, unit, source_fact_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO canonical_facts (
+                    ticker,
+                    cik,
+                    accession,
+                    period_start,
+                    period_end,
+                    period_type,
+                    statement,
+                    line_item,
+                    value,
+                    unit,
+                    source_fact_id,
+                    source_xbrl_tag,
+                    source_context_ref
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 params = [
                     (
@@ -713,6 +747,8 @@ def materialize_canonical_for_ticker(ticker: str, strict_ties: Optional[bool] = 
                         row.get("value"),
                         row.get("unit"),
                         row.get("source_fact_id"),
+                        row.get("source_xbrl_tag"),
+                        row.get("source_context_ref"),
                     )
                     for row in aggregated
                 ]

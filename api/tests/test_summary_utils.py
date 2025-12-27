@@ -22,6 +22,7 @@ from summary_utils import (
     compute_backtest_metrics,
     compute_coverage,
     compute_drivers,
+    compute_metric_backtests,
     compute_revenue_backtest,
     compute_revenue_time_travel,
     compute_tie_checks,
@@ -506,6 +507,47 @@ class BacktestMetricsTests(unittest.TestCase):
         assert backtest is not None
         self.assertEqual(backtest["samples"], 2)
         self.assertAlmostEqual(backtest["mae"], 12.0)
+
+    def test_compute_metric_backtests(self) -> None:
+        metrics = {
+            "2023-12-31": {
+                "values": {
+                    "revenue": {"value": 100.0, "unit": "USD"},
+                    "gross_profit": {"value": 40.0, "unit": "USD"},
+                    "operating_income": {"value": 15.0, "unit": "USD"},
+                    "net_income": {"value": 10.0, "unit": "USD"},
+                    "shares_diluted": {"value": 2.0, "unit": "SHARES"},
+                    "eps_diluted": {"value": 5.0, "unit": "USDPERSHARE"},
+                }
+            },
+            "2024-12-31": {
+                "values": {
+                    "revenue": {"value": 120.0, "unit": "USD"},
+                    "gross_profit": {"value": 50.0, "unit": "USD"},
+                    "operating_income": {"value": 18.0, "unit": "USD"},
+                    "net_income": {"value": 12.0, "unit": "USD"},
+                    "shares_diluted": {"value": 2.0, "unit": "SHARES"},
+                    "eps_diluted": {"value": 6.0, "unit": "USDPERSHARE"},
+                }
+            },
+            "2025-12-31": {
+                "values": {
+                    "revenue": {"value": 150.0, "unit": "USD"},
+                    "gross_profit": {"value": 60.0, "unit": "USD"},
+                    "operating_income": {"value": 22.0, "unit": "USD"},
+                    "net_income": {"value": 15.0, "unit": "USD"},
+                    "shares_diluted": {"value": 2.0, "unit": "SHARES"},
+                    "eps_diluted": {"value": 7.5, "unit": "USDPERSHARE"},
+                }
+            },
+        }
+        backtests = compute_metric_backtests(metrics, time_travel=True)
+        self.assertIsNotNone(backtests)
+        assert backtests is not None
+        self.assertIn("revenue", backtests)
+        self.assertIn("eps_diluted", backtests)
+        self.assertIn("gross_margin", backtests)
+        self.assertEqual(backtests["revenue"]["samples"], 2)
 
 
 class TieChecksTests(unittest.TestCase):

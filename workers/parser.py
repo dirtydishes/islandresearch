@@ -261,6 +261,8 @@ def parse_inline_xbrl(html_content: bytes) -> List[Dict[str, Optional[str]]]:
                     "statement": statement,
                     "value": amount,
                     "unit": unit,
+                    "xbrl_tag": name,
+                    "context_ref": ctx_ref,
                     "period_start": period_start,
                     "period_end": period_end,
                     "period_type": period_type,
@@ -281,6 +283,8 @@ def persist_fact(
     period_type: str = "duration",
     statement: str = "income_statement",
     source_path: Optional[str] = None,
+    xbrl_tag: Optional[str] = None,
+    context_ref: Optional[str] = None,
 ) -> bool:
     ensure_schema()
     if not is_allowed(statement, line_item):
@@ -290,8 +294,22 @@ def persist_fact(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO facts (accession, cik, ticker, period_start, period_end, period_type, statement, line_item, value, unit, source_path)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO facts (
+                    accession,
+                    cik,
+                    ticker,
+                    period_start,
+                    period_end,
+                    period_type,
+                    statement,
+                    line_item,
+                    value,
+                    unit,
+                    source_path,
+                    xbrl_tag,
+                    context_ref
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     accession,
@@ -305,6 +323,8 @@ def persist_fact(
                     value,
                     unit,
                     source_path,
+                    xbrl_tag,
+                    context_ref,
                 ),
             )
         conn.commit()
@@ -345,6 +365,8 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
                                 "statement": "income_statement",
                                 "value": value,
                                 "unit": "USD",
+                                "xbrl_tag": None,
+                                "context_ref": None,
                                 "period_start": None,
                                 "period_end": None,
                                 "period_type": "duration",
@@ -359,6 +381,8 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
                                 "statement": "income_statement",
                                 "value": value,
                                 "unit": "USD",
+                                "xbrl_tag": None,
+                                "context_ref": None,
                                 "period_start": None,
                                 "period_end": None,
                                 "period_type": "duration",
@@ -373,6 +397,8 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
                                 "statement": "income_statement",
                                 "value": value,
                                 "unit": "USD",
+                                "xbrl_tag": None,
+                                "context_ref": None,
                                 "period_start": None,
                                 "period_end": None,
                                 "period_type": "duration",
@@ -418,6 +444,8 @@ def parse_and_store(accession: str, cik: str, ticker: str, html_path: str) -> Di
             period_type=fact.get("period_type") or "unknown",
             statement=statement,
             source_path=html_path,
+            xbrl_tag=fact.get("xbrl_tag"),
+            context_ref=fact.get("context_ref"),
         )
         if ok:
             inserted += 1
